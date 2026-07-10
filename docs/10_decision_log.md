@@ -1217,3 +1217,91 @@ Reason:
 
 Keeps playback controls in one place (easy to extend) and avoids mixing
 playback into the Inspector, which is for inspecting and deleting.
+
+---
+
+## 2026-07-10: Audio Architecture Direction (Player / Analyzer Split)
+
+### Context
+
+A revised project policy ("DJ Node Mix 方針書", written with Grok) proposed
+making the whole `AudioEngine` swappable, with a future `CppAudioEngine`
+(C++/WASM) replacing the JS `WebAudioEngine`. This was discussed with Claude
+and corrected. Full discussion record:
+`docs/discussions/2026-07-10_claude_audioengine_ts_dsp-poems.md`.
+
+These decisions refine the future direction only. The implemented MVP audio
+engine (Phases 8–9) is unaffected.
+
+### Decisions
+
+#### 1. The swap unit is the Analyzer, not the whole engine
+
+Decision:
+
+Split the audio layer into Player (playback: load / play / stop / crossfade)
+and Analyzer (analysis: BPM, beats, waveform peaks). Only the Analyzer is a
+replacement target. The Player stays JS + Web Audio permanently. The existing
+`AudioEngine` class is the Player.
+
+Reason:
+
+In a browser, audio output always goes through Web Audio. WASM cannot output
+sound directly, so a C++ rewrite of playback would still drive Web Audio from
+JS and gain nothing. Analysis is a pure function over PCM data, which is
+exactly what WASM is good at.
+
+#### 2. Analyzer boundary rules (data types over class design)
+
+Decision:
+
+The future Analyzer interface must be: async only, no Web Audio types
+(`Float32Array` + `sampleRate` instead of `AudioBuffer`), plain serializable
+results only, and decoding fixed on the JS side (`decodeAudioData`).
+
+Reason:
+
+Portability to Workers/WASM is determined by what crosses the boundary.
+`AudioBuffer` cannot cross a Worker boundary and does not exist in C++.
+Details in `docs/06_audio_engine_requirements.md` ("Future Direction").
+
+#### 3. Analysis features are introduced library-first
+
+Decision:
+
+When analysis is needed, adopt in stages behind the Analyzer interface:
+simple JS library (e.g. web-audio-beat-detector) → high-accuracy WASM library
+(e.g. essentia.js) → optionally hand-written C++/WASM.
+
+Reason:
+
+Mature analysis libraries already exist, and the best ones (essentia.js,
+aubiojs) are themselves C++/WASM. A hand-written C++ port is therefore a
+learning exercise, not a performance requirement. Check maintenance status
+before adopting any library.
+
+#### 4. TypeScript is confirmed (policy doc's "JavaScript" is superseded)
+
+Decision:
+
+The entire JS-side codebase stays TypeScript, as it already is. The policy
+doc's Phase 1 "React + JavaScript" wording is superseded.
+
+Reason:
+
+The swap strategy depends on implementations honoring a shared contract
+(`implements Analyzer`). Plain JS has no `interface` construct, so the
+contract would be unchecked convention. TS compiles to the same JS at runtime.
+
+#### 5. MVP requires no analysis
+
+Decision:
+
+No Analyzer is implemented or designed in detail until a concrete feature
+(waveform display, BPM display) needs it.
+
+Reason:
+
+The MVP goal (connect nodes, play transitions) is already implemented without
+any analysis. Designing an interface for an unimplemented C++ future risks
+over-abstraction (YAGNI).

@@ -196,3 +196,51 @@ Future versions may support:
 - performance mode
 
 These are out of scope for the MVP.
+
+## Future Direction: Player / Analyzer Split
+
+Decided on 2026-07-10 (see `docs/10_decision_log.md` and
+`docs/discussions/2026-07-10_claude_audioengine_ts_dsp-poems.md`).
+
+The audio layer has two conceptually different parts, and only one of them
+is ever a candidate for replacement:
+
+| Part | Role | Replaceable? |
+|---|---|---|
+| **Player** | load / play / stop / crossfade / position events | No. Always JS + Web Audio API. The browser's audio output is always Web Audio, so a C++/WASM rewrite of playback is not meaningful. |
+| **Analyzer** (future) | takes PCM, returns analysis results (BPM, beats, waveform peaks) | Yes. Implementations can be swapped: simple JS library → high-accuracy WASM library (e.g. essentia.js) → hand-written C++/WASM (learning purpose only). |
+
+The existing `AudioEngine` in `src/audio/audioEngine.ts` is the Player.
+It is not a swap target and its abstraction can stay thin.
+
+When analysis features are added, the `Analyzer` interface must follow
+these boundary rules. Portability to Workers and WASM is guaranteed by
+the data types crossing the boundary, not by the class design:
+
+1. No Web Audio types in the interface. Use `Float32Array` + `sampleRate`,
+   never `AudioBuffer` or `AudioNode` (they cannot cross a Worker boundary
+   and do not exist in C++).
+2. Everything async (`Promise`), because real implementations run in a
+   Worker.
+3. Results are plain serializable data only (numbers, arrays,
+   `Float32Array`). No class instances, no functions.
+4. Decoding (MP3 → PCM) stays on the JS side via `decodeAudioData`, so the
+   Analyzer input is always raw PCM.
+
+Sketch:
+
+```ts
+interface Analyzer {
+  analyze(pcm: Float32Array, sampleRate: number): Promise<AnalysisResult>;
+}
+
+interface AnalysisResult {
+  bpm: number;
+  beats: number[];             // beat positions in seconds
+  waveformPeaks: Float32Array; // downsampled peaks for display
+  duration: number;
+}
+```
+
+Do not implement the Analyzer, or design it in more detail, before a
+feature actually needs it. The MVP needs no analysis at all.

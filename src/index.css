@@ -357,6 +357,31 @@ code {
   background: var(--accent-border);
 }
 
+/* Edit controls for a selected edge (Phase 10). */
+.inspector-select,
+.inspector-number-input {
+  font-size: 13px;
+  padding: 2px 6px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.inspector-number-input {
+  width: 72px;
+}
+
+.inspector-number-input:disabled {
+  color: var(--text);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inspector-unit {
+  margin-left: 4px;
+}
+
 /* Hint shown in the Inspector while connection mode is active. */
 .inspector-hint {
   margin-top: 12px;

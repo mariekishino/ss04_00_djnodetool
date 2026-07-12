@@ -31,6 +31,10 @@
 // and passes it to PlayerControls, which can play or stop the selected node's
 // sound. The engine is disposed when the app unmounts. Crossfade and real
 // audio files are not part of this phase.
+//
+// Phase 10: "Edge editing". The Inspector can change a selected edge's
+// transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
+// fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 
 import { useEffect, useRef, useState } from "react";
 // The type and the component are both named TrackNode; alias the type to
@@ -38,9 +42,15 @@ import { useEffect, useRef, useState } from "react";
 import type {
   Project,
   TransitionEdge,
+  TransitionType,
   TrackNode as TrackNodeData,
 } from "./domain/types";
 import { mockProject } from "./domain/mockProject";
+import {
+  changeTransitionType,
+  changeFadeDuration,
+  DEFAULT_FADE_SECONDS,
+} from "./domain/edgeRules";
 import { downloadProject, parseProject } from "./storage/projectStorage";
 import { AudioEngine } from "./audio/audioEngine";
 import TrackLibrary from "./components/TrackLibrary";
@@ -155,6 +165,33 @@ function App() {
     setSelectedEdgeId(null);
   }
 
+  // Replace one edge in the project with an updated copy produced by `update`.
+  function updateEdge(
+    edgeId: string,
+    update: (edge: TransitionEdge) => TransitionEdge,
+  ) {
+    setProject((current) => ({
+      ...current,
+      edges: current.edges.map((edge) =>
+        edge.id === edgeId ? update(edge) : edge,
+      ),
+    }));
+  }
+
+  // Change an edge's transition type. edgeRules keeps fadeDurationSec
+  // consistent (cut -> 0, fade/crossfade from 0 -> default).
+  function handleChangeEdgeTransitionType(
+    edgeId: string,
+    transitionType: TransitionType,
+  ) {
+    updateEdge(edgeId, (edge) => changeTransitionType(edge, transitionType));
+  }
+
+  // Change an edge's fade duration. edgeRules clamps invalid input to 0.
+  function handleChangeEdgeFadeDuration(edgeId: string, seconds: number) {
+    updateEdge(edgeId, (edge) => changeFadeDuration(edge, seconds));
+  }
+
   // Delete a single edge by id, then clear the edge selection.
   function handleDeleteEdge(edgeId: string) {
     setProject((current) => ({
@@ -212,7 +249,7 @@ function App() {
           fromNodeId: connectionSourceId,
           toNodeId: nodeId,
           transitionType: "crossfade",
-          fadeDurationSec: 3,
+          fadeDurationSec: DEFAULT_FADE_SECONDS,
         };
         setProject((current) => ({
           ...current,
@@ -300,6 +337,8 @@ function App() {
           onDeleteNode={handleDeleteNode}
           onDeleteEdge={handleDeleteEdge}
           onStartConnection={handleStartConnection}
+          onChangeEdgeTransitionType={handleChangeEdgeTransitionType}
+          onChangeEdgeFadeDuration={handleChangeEdgeFadeDuration}
         />
         <PlayerControls
           selectedNode={selectedNode}

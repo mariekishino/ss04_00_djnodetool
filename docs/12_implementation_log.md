@@ -966,3 +966,85 @@ Results:
   - Stop stops all active voices; a new Play transition stops the previous pair
     first.
   - Whether sound is actually audible is left to the user's own manual check.
+
+## 2026-07-12: Phase 10 - Edge editing (transition type and fade duration)
+
+### Summary
+
+The Inspector's edge view is now editable: a select changes the selected
+edge's `transitionType` (cut / fade / crossfade) and a number input changes
+its `fadeDurationSec`. The consistency rules live in a new pure domain module
+`src/domain/edgeRules.ts`: switching to `cut` zeroes the fade (and the input
+is disabled), switching to `fade`/`crossfade` from a 0 fade resets it to the
+default 3, and invalid input (NaN from an emptied field, negatives) clamps
+to 0. This closes the last gap in the MVP Definition of Done item "A user can
+define a simple transition"; see the 2026-07-12 decision log entry.
+
+### Files Modified
+
+* `src/domain/edgeRules.ts` (new) - `DEFAULT_FADE_SECONDS`,
+  `changeTransitionType`, `changeFadeDuration`; pure, React-free, documented
+  against the decision log rules.
+* `src/domain/edgeRules.test.ts` (new) - 8 unit tests for the rules above,
+  including immutability and the cut-stays-at-0 guard.
+* `src/App.tsx` - `updateEdge` helper (replace one edge via an update
+  function); `handleChangeEdgeTransitionType` / `handleChangeEdgeFadeDuration`
+  delegating to edgeRules; new-edge creation now uses `DEFAULT_FADE_SECONDS`
+  instead of a literal 3; the two handlers are passed to InspectorPanel.
+* `src/components/InspectorPanel.tsx` - the edge view's read-only Transition
+  and Fade rows become a labeled select and number input. The panel only
+  reports the user's choice; App applies the rules. The fade input is
+  disabled while the type is `cut`.
+* `src/index.css` - `.inspector-select`, `.inspector-number-input` (+
+  disabled state), `.inspector-unit`.
+
+### Files Intentionally Not Modified
+
+* `src/audio/*` - playback already reads `transitionType` /
+  `fadeDurationSec` from the edge on each play; no engine change is needed
+  for edited values to take effect.
+* `src/storage/projectStorage.ts` - edited values serialize with the
+  existing export/import as plain fields.
+
+### State and Data Flow
+
+* Edits go InspectorPanel -> App callback -> `updateEdge` ->
+  `setProject`, replacing only the one edge object. PlayerControls' status
+  line updates automatically because it derives from the selected edge.
+* The cast `event.target.value as TransitionType` is safe because the
+  select's options come from a `TRANSITION_TYPES` list typed as
+  `TransitionType[]`.
+
+### Out of Scope (deferred)
+
+* Editing `note` (listed as optional in `docs/05_ui_requirements.md`).
+* Any fade-duration upper bound in the UI; playback already clamps via
+  `sanitizeFadeDuration` (60s max).
+* Real audio, file import, and everything else post-MVP.
+
+### Verification
+
+```
+npm run build   # tsc -b && vite build
+npm run lint    # eslint .
+npm run test    # vitest run
+```
+
+Results:
+
+* `npm run build`: passed (0 errors).
+* `npm run lint`: passed (no warnings, no errors).
+* `npm run test`: passed (23 tests: 5 storage + 5 nodeSound + 5
+  transitionTiming + 8 edgeRules).
+* Browser verification (Playwright + headless Chromium against
+  `npm run dev`, driving the real UI; recipe recorded in
+  `.claude/skills/verify/SKILL.md`):
+  - Selecting the mock edge shows the select (crossfade) and fade input (5).
+  - Switch to cut: fade shows 0 and the input is disabled.
+  - Switch to fade: fade resets to the default 3.
+  - Typing 7.5 sticks; the player status line follows the type live.
+  - Emptying the field or typing a negative value clamps to 0.
+  - Play transition -> Stop with edited values: no console errors.
+  - Deselect + reselect: edited values persist in the project state.
+  - Audible playback is left to the user's manual check (the VM has no
+    audio output).

@@ -1370,3 +1370,46 @@ Matches the project rule "separate domain logic from UI logic" and the
 existing pattern (`transitionTiming.ts`, `nodeSound.ts`). The rules were
 already agreed in the Phase 7 planning entry ("Rules for fadeDurationSec");
 Phase 10 implements them.
+
+---
+
+## 2026-07-12: MVP Declared Complete
+
+### Context
+
+Phase 10 (edge editing) was merged as PR #16, closing the last gap identified
+in the MVP completion discussion (see the previous entry and
+`docs/discussions/2026-07-12_mvp_completion_phase10.md`).
+
+### Decision
+
+The MVP defined in `CLAUDE.md` ("Definition of Done for MVP") and
+`docs/02_mvp_scope.md` is declared complete as of 2026-07-12.
+
+How each Definition of Done item is met:
+
+| DoD item | Met by |
+|---|---|
+| A user can see tracks in a library | Phase 2 (Track Library) |
+| A user can see tracks as nodes on a canvas | Phases 2, 4 (render + Add to Canvas) |
+| A user can connect nodes | Phase 7 (Start Connection flow) |
+| A user can define a simple transition | Phases 7 + 10 (create edge, then edit type / fade) |
+| A user can play a basic transition | Phases 8, 9 (playback, cut / fade / crossfade) |
+| A user can save and load the project as JSON | Phase 6 (export / import) |
+| The code structure is understandable | domain / audio / components / storage split; ~1,700 lines; 23 unit tests |
+
+### Notes and known limitations (accepted for the MVP)
+
+- Playback uses an oscillator placeholder; `audioUrl` is not loaded. Real
+  audio file import is the next phase (design questions recorded in the
+  2026-07-12 discussion record, section 5).
+- Editing `note` on an edge, drag-and-drop from the library, and node
+  renaming remain deferred as planned.
+- No analysis exists; the BPM shown in the Track Library is mock metadata.
+
+### Next
+
+Post-MVP work starts with the audio file import phase: file selection and
+persistence strategy, decode via `decodeAudioData`, and the first real
+`Player` use of PCM — the point where the Player / Analyzer boundary
+(2026-07-10 entry) becomes concrete.

@@ -4,7 +4,7 @@ A node-based music arrangement and DJ prototype.
 
 Instead of a vertical playlist, users place tracks as nodes on a free-form canvas, connect them with transition edges, and play simple crossfades between connected tracks.
 
-> **Status:** MVP in progress. Core features are implemented through Phase 9 (canvas, node/edge editing, JSON save/load, playback, crossfade). See `docs/12_implementation_log.md`.
+> **Status:** MVP complete (2026-07-12, Phases 0–10: canvas, node/edge editing including transition type and fade duration, JSON save/load, playback, crossfade). Audio is still an oscillator placeholder; real audio file import is the next phase. See `docs/12_implementation_log.md` and the 2026-07-12 entries in `docs/10_decision_log.md`.
 
 ---
 

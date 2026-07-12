@@ -284,9 +284,9 @@ Rules for `fadeDurationSec`:
 - If transitionType is changed to `"fade"` or `"crossfade"` and `fadeDurationSec`
   is 0, reset it to a positive number (3).
 
-**Status:** Not implemented yet. Edge creation is MVP step 9; these defaults
-apply once that step is built. They are recorded here as the agreed defaults,
-not as current behavior.
+**Status:** Implemented. The new-edge defaults were built in Phase 7 (edge
+creation); the `fadeDurationSec` rules for type changes were built in Phase 10
+(edge editing, 2026-07-12) as pure helpers in `src/domain/edgeRules.ts`.
 
 ### Deferred
 
@@ -1305,3 +1305,68 @@ Reason:
 The MVP goal (connect nodes, play transitions) is already implemented without
 any analysis. Designing an interface for an unimplemented C++ future risks
 over-abstraction (YAGNI).
+
+---
+
+## 2026-07-12: MVP Completion Criteria and Phase 10 (Edge Editing)
+
+### Context
+
+With Phases 0-9 implemented, the question was whether to declare the MVP
+complete. The Definition of Done includes "A user can define a simple
+transition", but the Inspector showed a selected edge's `transitionType` and
+`fadeDurationSec` read-only: every new edge was fixed at crossfade / 3s, and
+trying `cut` or `fade` required hand-editing the exported JSON. Discussion
+record: `docs/discussions/2026-07-12_mvp_completion_phase10.md`.
+
+### Decisions
+
+#### 1. "Define a simple transition" requires editing, not just creating
+
+Decision:
+
+Interpret the DoD item as "the user can choose the transition type and fade
+duration from the UI". The MVP is therefore not complete until edge editing
+exists. Phase 10 (edge editing) is added as the final MVP phase.
+
+Reason:
+
+Two readings were possible: (A) creating an edge with defaults already counts
+as "defining", or (B) defining implies choosing. (B) was chosen because an MVP
+where two of the three transition types are unreachable without hand-editing
+JSON does not demonstrate the product concept, and the editing UI was already
+specified in `docs/05_ui_requirements.md` ("Edge Selected").
+
+#### 2. Phase 10 scope: type select + fade input only
+
+Decision:
+
+The Inspector's edge view gets a `transitionType` select (cut / fade /
+crossfade) and a `fadeDurationSec` number input. Editing `note` stays out of
+scope even though `docs/05_ui_requirements.md` lists it as optional.
+
+Reason:
+
+The smallest change that satisfies the DoD interpretation above. `note` has no
+effect on playback and can come later.
+
+#### 3. Editing rules live in a pure domain module
+
+Decision:
+
+The consistency rules are implemented as pure functions in
+`src/domain/edgeRules.ts` (unit tested), not inside the React components:
+
+- Switching to `cut` sets `fadeDurationSec` to 0; the fade input is disabled
+  while the type is `cut`.
+- Switching to `fade` / `crossfade` when the fade is 0 resets it to the
+  default (3, exported as `DEFAULT_FADE_SECONDS` and reused for new edges).
+- Non-finite input (an emptied number field parses to NaN) and negative
+  values clamp to 0.
+
+Reason:
+
+Matches the project rule "separate domain logic from UI logic" and the
+existing pattern (`transitionTiming.ts`, `nodeSound.ts`). The rules were
+already agreed in the Phase 7 planning entry ("Rules for fadeDurationSec");
+Phase 10 implements them.

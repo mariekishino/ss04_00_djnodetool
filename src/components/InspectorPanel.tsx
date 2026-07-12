@@ -13,9 +13,24 @@
 //
 // Phase 7.5: when an edge is selected instead of a node, the panel shows the
 // connection's basic info (from -> to, transition type, fade duration) read
-// only, plus a "Delete connection" button. Editing the edge is out of scope.
+// only, plus a "Delete connection" button.
+//
+// Phase 10: the edge view becomes editable: a select for transitionType and a
+// number input for fadeDurationSec. The panel only reports the user's choice
+// via callbacks; the consistency rules (cut -> fade 0, etc.) are applied by
+// App using domain/edgeRules. The fade input is disabled for "cut" because a
+// cut is instant and its fade is always 0. Editing `note` is still out of
+// scope.
 
-import type { Track, TrackNode, TransitionEdge } from "../domain/types";
+import type {
+  Track,
+  TrackNode,
+  TransitionEdge,
+  TransitionType,
+} from "../domain/types";
+
+// Options for the transition type select, in display order.
+const TRANSITION_TYPES: TransitionType[] = ["cut", "fade", "crossfade"];
 
 type InspectorPanelProps = {
   tracks: Track[];
@@ -27,6 +42,11 @@ type InspectorPanelProps = {
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onStartConnection: () => void;
+  onChangeEdgeTransitionType: (
+    edgeId: string,
+    transitionType: TransitionType,
+  ) => void;
+  onChangeEdgeFadeDuration: (edgeId: string, seconds: number) => void;
 };
 
 function InspectorPanel({
@@ -39,6 +59,8 @@ function InspectorPanel({
   onDeleteNode,
   onDeleteEdge,
   onStartConnection,
+  onChangeEdgeTransitionType,
+  onChangeEdgeFadeDuration,
 }: InspectorPanelProps) {
   // Edge selection takes priority when present (selection is exclusive, so at
   // most one of node/edge is set at a time).
@@ -58,11 +80,51 @@ function InspectorPanel({
             {fromLabel} → {toLabel}
           </dd>
 
-          <dt>Transition</dt>
-          <dd>{edge.transitionType}</dd>
+          <dt>
+            <label htmlFor="edge-transition-type">Transition</label>
+          </dt>
+          <dd>
+            <select
+              id="edge-transition-type"
+              className="inspector-select"
+              value={edge.transitionType}
+              onChange={(event) =>
+                // The options come from TRANSITION_TYPES, so the value is
+                // always a valid TransitionType; the cast just tells TS.
+                onChangeEdgeTransitionType(
+                  edge.id,
+                  event.target.value as TransitionType,
+                )
+              }
+            >
+              {TRANSITION_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </dd>
 
-          <dt>Fade</dt>
-          <dd>{edge.fadeDurationSec}s</dd>
+          <dt>
+            <label htmlFor="edge-fade-duration">Fade</label>
+          </dt>
+          <dd>
+            <input
+              id="edge-fade-duration"
+              className="inspector-number-input"
+              type="number"
+              min={0}
+              step={0.5}
+              value={edge.fadeDurationSec}
+              disabled={edge.transitionType === "cut"}
+              onChange={(event) =>
+                // valueAsNumber is NaN while the field is emptied; edgeRules
+                // clamps that to 0.
+                onChangeEdgeFadeDuration(edge.id, event.target.valueAsNumber)
+              }
+            />
+            <span className="inspector-unit">s</span>
+          </dd>
         </dl>
 
         <button

@@ -10,12 +10,16 @@
 // with one such chain per active voice, so crossfade can play two at once.
 //
 // This transition is a PREVIEW between a source node and a target node, not a
-// full DJ transition from a currently-playing track. When real audio is added,
-// only createSourceForNode changes; the transition logic stays the same.
+// full DJ transition from a currently-playing track.
 //
-// Not in this phase: loading node.audioUrl, AudioBuffer decoding, Suno audio.
+// Phase 11: real audio. importTrackAudio decodes a picked file into the
+// TrackAudioStore, and createSourceForNode (the swap point promised in the
+// Phase 8 comment) plays that buffer when the node's track has one; tracks
+// without imported audio keep the oscillator placeholder. The transition
+// logic is unchanged: both source types are AudioScheduledSourceNodes.
 
 import type { TransitionEdge, TrackNode } from "../domain/types";
+import { TrackAudioStore } from "./trackAudioStore";
 import { soundForNode } from "./nodeSound";
 import { sanitizeFadeDuration, MIN_FADE_SECONDS } from "./transitionTiming";
 
@@ -36,9 +40,17 @@ const PLAY_GAIN = 0.2;
 const STOP_PADDING_SECONDS = 0.02;
 
 export class AudioEngine {
-  // Created lazily on the first play call, which must be a user gesture so the
-  // browser allows audio. Null until then.
+  // Where decoded audio lives, keyed by trackId. Owned by App and shared with
+  // the future Analyzer side, so it is passed in rather than created here.
+  private trackAudio: TrackAudioStore;
+
+  // Created lazily on the first play or import call, which must be a user
+  // gesture so the browser allows audio. Null until then.
   private context: AudioContext | null = null;
+
+  constructor(trackAudio: TrackAudioStore) {
+    this.trackAudio = trackAudio;
+  }
 
   // Every voice currently scheduled or playing. playNode adds one; a crossfade
   // adds two. stop() clears them all.
@@ -57,13 +69,37 @@ export class AudioEngine {
     return this.context;
   }
 
-  // Create the audio source for a node. This is the single swap point: today it
-  // returns an oscillator; later it can return an AudioBufferSourceNode built
-  // from node.audioUrl, without changing the rest of the engine or the UI.
+  // Decode a picked audio file (MP3/WAV/...) and keep the result in the
+  // TrackAudioStore. Decoding happens once here, at import time; playback
+  // never decodes. Called from the file-pick handler, a user gesture, so
+  // creating the AudioContext here is allowed.
+  async importTrackAudio(
+    trackId: string,
+    file: File,
+  ): Promise<{ durationSec: number }> {
+    const context = this.ensureContext();
+    const encoded = await file.arrayBuffer();
+    // decodeAudioData rejects on undecodable input; the caller reports it.
+    const buffer = await context.decodeAudioData(encoded);
+    this.trackAudio.set(trackId, buffer);
+    return { durationSec: buffer.duration };
+  }
+
+  // Create the audio source for a node. This is the single swap point: when
+  // the node's track has imported audio, play that buffer; otherwise fall back
+  // to the oscillator placeholder. The rest of the engine and the UI see only
+  // an AudioScheduledSourceNode either way.
   private createSourceForNode(
     context: AudioContext,
     node: TrackNode,
   ): AudioScheduledSourceNode {
+    const buffer = this.trackAudio.get(node.trackId);
+    if (buffer) {
+      const bufferSource = context.createBufferSource();
+      bufferSource.buffer = buffer;
+      return bufferSource;
+    }
+
     const { frequency, waveform } = soundForNode(node);
     const oscillator = context.createOscillator();
     oscillator.type = waveform;

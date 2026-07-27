@@ -35,6 +35,12 @@
 // Phase 10: "Edge editing". The Inspector can change a selected edge's
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
+//
+// Phase 11: "Audio file import". App owns the TrackAudioStore (decoded audio
+// per track, in-memory only) and passes it to the AudioEngine. "Load audio"
+// in the Track Library decodes a picked file via the engine; trackAudioInfo
+// mirrors what is loaded (file name + duration) as React state for display.
+// Nothing audio-related is saved to the project JSON in this phase.
 
 import { useEffect, useRef, useState } from "react";
 // The type and the component are both named TrackNode; alias the type to
@@ -53,7 +59,8 @@ import {
 } from "./domain/edgeRules";
 import { downloadProject, parseProject } from "./storage/projectStorage";
 import { AudioEngine } from "./audio/audioEngine";
-import TrackLibrary from "./components/TrackLibrary";
+import { TrackAudioStore } from "./audio/trackAudioStore";
+import TrackLibrary, { type TrackAudioInfo } from "./components/TrackLibrary";
 import ProjectToolbar from "./components/ProjectToolbar";
 import NodeCanvas from "./components/NodeCanvas";
 import InspectorPanel from "./components/InspectorPanel";
@@ -74,12 +81,30 @@ function App() {
   // cleanup), never during render, so PlayerControls receives plain callbacks
   // and the UI never touches the engine directly.
   const audioEngineRef = useRef<AudioEngine | null>(null);
+
+  // Decoded audio per track, shared between the engine (playback) and the
+  // future Analyzer. Lives in a ref because it is not render state; the
+  // displayable part is mirrored in trackAudioInfo below.
+  const trackAudioStoreRef = useRef<TrackAudioStore | null>(null);
+  function getTrackAudioStore(): TrackAudioStore {
+    if (!trackAudioStoreRef.current) {
+      trackAudioStoreRef.current = new TrackAudioStore();
+    }
+    return trackAudioStoreRef.current;
+  }
+
   function getAudioEngine(): AudioEngine {
     if (!audioEngineRef.current) {
-      audioEngineRef.current = new AudioEngine();
+      audioEngineRef.current = new AudioEngine(getTrackAudioStore());
     }
     return audioEngineRef.current;
   }
+
+  // What audio is loaded per track (file name + duration), for the Track
+  // Library display. In-memory only, like the store: gone after a reload.
+  const [trackAudioInfo, setTrackAudioInfo] = useState<
+    Map<string, TrackAudioInfo>
+  >(new Map());
 
   // Release audio resources when the app unmounts.
   useEffect(() => {
@@ -231,6 +256,26 @@ function App() {
     reader.readAsText(file);
   }
 
+  // Import an audio file for a track: decode it via the engine (which stores
+  // the result in the TrackAudioStore) and record file name + duration for
+  // display. On a failed decode the store is unchanged and a simple message
+  // is shown, same pattern as JSON import.
+  async function handleImportTrackAudio(trackId: string, file: File) {
+    try {
+      const { durationSec } = await getAudioEngine().importTrackAudio(
+        trackId,
+        file,
+      );
+      setTrackAudioInfo((current) =>
+        new Map(current).set(trackId, { fileName: file.name, durationSec }),
+      );
+    } catch {
+      window.alert(
+        `Could not load "${file.name}". It may not be a supported audio file.`,
+      );
+    }
+  }
+
   // Enter connection mode using the currently selected node as the source.
   function handleStartConnection() {
     if (selectedNodeId) {
@@ -325,7 +370,9 @@ function App() {
         />
         <TrackLibrary
           tracks={project.tracks}
+          audioInfo={trackAudioInfo}
           onAddToCanvas={handleAddToCanvas}
+          onImportAudio={handleImportTrackAudio}
         />
         <InspectorPanel
           tracks={project.tracks}

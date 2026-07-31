@@ -1,18 +1,19 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
+  /* Hacker theme: gray base + neon green & pink accents */
+  --text: #7fe0a0;
+  --text-h: #39ff14;
+  --bg: #14151a;
+  --border: #2c3140;
+  --code-bg: #1b1d24;
+  --accent: #ff2d95;
+  --accent-bg: rgba(255, 45, 149, 0.12);
+  --accent-border: rgba(255, 45, 149, 0.5);
+  --social-bg: rgba(27, 29, 36, 0.5);
   --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+    rgba(57, 255, 20, 0.15) 0 0 12px 0, rgba(0, 0, 0, 0.6) 0 4px 6px -2px;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --sans: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --heading: ui-monospace, 'Cascadia Code', Consolas, monospace;
   --mono: ui-monospace, Consolas, monospace;
 
   font: 18px/145% var(--sans);
@@ -32,17 +33,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
+    /* Same hacker palette regardless of system light/dark preference */
+    --text: #7fe0a0;
+    --text-h: #39ff14;
+    --bg: #14151a;
+    --border: #2c3140;
+    --code-bg: #1b1d24;
+    --accent: #ff2d95;
+    --accent-bg: rgba(255, 45, 149, 0.12);
+    --accent-border: rgba(255, 45, 149, 0.5);
+    --social-bg: rgba(27, 29, 36, 0.5);
     --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+      rgba(57, 255, 20, 0.15) 0 0 12px 0, rgba(0, 0, 0, 0.6) 0 4px 6px -2px;
   }
 
   #social .button-icon {
@@ -64,6 +66,12 @@
 
 body {
   margin: 0;
+  /* Faint hacker grid over the gray base */
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(57, 255, 20, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 45, 149, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
 h1,

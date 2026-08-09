@@ -472,6 +472,13 @@ code {
   outline-offset: 2px;
 }
 
+/* The node a running sequence is currently playing. Uses the neon green
+   text color so it reads differently from the pink selection outline. */
+.track-node.playing {
+  border-color: var(--text-h);
+  box-shadow: 0 0 12px var(--text-h);
+}
+
 /* The source node while connection mode is active. */
 .track-node.connection-source {
   outline: 3px dashed var(--accent);

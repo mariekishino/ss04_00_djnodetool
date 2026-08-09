@@ -24,6 +24,8 @@ type TrackNodeProps = {
   node: TrackNodeType;
   track?: Track;
   isSelected: boolean;
+  // True for the node a running sequence is currently playing.
+  isPlaying: boolean;
   // True for the source node while connection mode is active.
   isConnectionSource: boolean;
   // True whenever the canvas is in connection mode (any source chosen).
@@ -40,6 +42,7 @@ function TrackNode({
   node,
   track,
   isSelected,
+  isPlaying,
   isConnectionSource,
   isConnecting,
   canvasRef,
@@ -93,6 +96,7 @@ function TrackNode({
   const className = [
     "track-node",
     isSelected ? "selected" : "",
+    isPlaying ? "playing" : "",
     isConnectionSource ? "connection-source" : "",
   ]
     .filter(Boolean)

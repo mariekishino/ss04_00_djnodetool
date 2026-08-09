@@ -17,6 +17,9 @@
 //
 // Phase 7.5: edges are selectable. Each EdgeView gets isSelected and an
 // onSelect that reports the edge id up to App via onEdgeClick.
+//
+// Phase 12: playingNodeId marks the node a running sequence is playing, so the
+// canvas shows where playback currently is.
 
 import { useRef } from "react";
 import type { Track, TrackNode as TrackNodeType, TransitionEdge } from "../domain/types";
@@ -29,6 +32,7 @@ type NodeCanvasProps = {
   edges: TransitionEdge[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
+  playingNodeId: string | null;
   connectionSourceId: string | null;
   onSelectNode: (id: string) => void;
   onNodeClick: (id: string) => void;
@@ -45,6 +49,7 @@ function NodeCanvas({
   edges,
   selectedNodeId,
   selectedEdgeId,
+  playingNodeId,
   connectionSourceId,
   onSelectNode,
   onNodeClick,
@@ -102,6 +107,7 @@ function NodeCanvas({
           node={node}
           track={findTrack(node.trackId)}
           isSelected={node.id === selectedNodeId}
+          isPlaying={node.id === playingNodeId}
           isConnectionSource={node.id === connectionSourceId}
           isConnecting={isConnecting}
           canvasRef={canvasRef}

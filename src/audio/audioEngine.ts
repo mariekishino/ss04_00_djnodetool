@@ -17,11 +17,21 @@
 // Phase 8 comment) plays that buffer when the node's track has one; tracks
 // without imported audio keep the oscillator placeholder. The transition
 // logic is unchanged: both source types are AudioScheduledSourceNodes.
+//
+// Phase 12: primitives for sequential playback. startNode and transitionToNode
+// are the pieces SequencePlayer chains together. Unlike playNode /
+// playTransition (one-shot previews that stop everything first),
+// transitionToNode keeps the outgoing track playing and fades it out, so one
+// track can hand over to the next without a gap.
 
 import type { TransitionEdge, TrackNode } from "../domain/types";
 import { TrackAudioStore } from "./trackAudioStore";
 import { soundForNode } from "./nodeSound";
-import { sanitizeFadeDuration, MIN_FADE_SECONDS } from "./transitionTiming";
+import {
+  sanitizeFadeDuration,
+  MIN_FADE_SECONDS,
+  PLACEHOLDER_NODE_SECONDS,
+} from "./transitionTiming";
 
 // A playing voice: a source plus its own gain, kept together so stop() can ramp
 // the gain down and disconnect both. Crossfade has two voices at once, so the
@@ -195,6 +205,94 @@ export class AudioEngine {
 
         this.rampIn(this.startVoice(targetNode, now), now, fade);
         break;
+      }
+    }
+  }
+
+  // How long a node plays before a sequence moves on: the imported audio's
+  // own length, or the placeholder length for a node still using the
+  // oscillator (which would otherwise never end).
+  durationForNode(node: TrackNode): number {
+    return (
+      this.trackAudio.get(node.trackId)?.duration ?? PLACEHOLDER_NODE_SECONDS
+    );
+  }
+
+  // Start one node as the beginning of a sequence: stop anything playing,
+  // then bring the node in with a short ramp. Returns how long it will play,
+  // so the caller can schedule the next step.
+  startNode(node: TrackNode): { durationSec: number } {
+    const context = this.ensureContext();
+    this.stop();
+
+    const now = context.currentTime;
+    this.rampIn(this.startVoice(node, now), now, MIN_FADE_SECONDS);
+    return { durationSec: this.durationForNode(node) };
+  }
+
+  // Hand over from whatever is playing to targetNode, following the edge's
+  // transition type. Unlike playTransition, the outgoing track is NOT
+  // restarted: it is already playing, so it is only faded out. Returns the
+  // target's duration for scheduling the step after this one.
+  transitionToNode(
+    edge: TransitionEdge,
+    targetNode: TrackNode,
+  ): { durationSec: number } {
+    const context = this.ensureContext();
+    const now = context.currentTime;
+    const fade = sanitizeFadeDuration(edge.fadeDurationSec);
+
+    switch (edge.transitionType) {
+      case "cut": {
+        // Drop the outgoing track over a click-avoiding ramp only.
+        this.fadeOutActiveVoices(now, MIN_FADE_SECONDS);
+        this.rampIn(this.startVoice(targetNode, now), now, MIN_FADE_SECONDS);
+        break;
+      }
+      case "fade": {
+        // The outgoing track fades away first; the target follows it.
+        this.fadeOutActiveVoices(now, fade);
+        const targetStart = now + fade;
+        this.rampIn(
+          this.startVoice(targetNode, targetStart),
+          targetStart,
+          MIN_FADE_SECONDS,
+        );
+        break;
+      }
+      case "crossfade": {
+        // Both play together: outgoing 1->0 while target 0->1 over `fade`.
+        this.fadeOutActiveVoices(now, fade);
+        this.rampIn(this.startVoice(targetNode, now), now, fade);
+        break;
+      }
+    }
+
+    return { durationSec: this.durationForNode(targetNode) };
+  }
+
+  // Fade every currently playing voice down to 0 over fadeSec and schedule it
+  // to stop. The voices are dropped from the active list right away so a new
+  // voice started in the same step is not caught by a later fade-out.
+  private fadeOutActiveVoices(atSec: number, fadeSec: number): void {
+    const voices = this.activeVoices;
+    this.activeVoices = [];
+
+    for (const { source, gain } of voices) {
+      // Ramp from wherever the gain is now, replacing any scheduled changes.
+      gain.gain.cancelScheduledValues(atSec);
+      gain.gain.setValueAtTime(gain.gain.value, atSec);
+      gain.gain.linearRampToValueAtTime(0, atSec + fadeSec);
+
+      // The voice is no longer tracked; clean up when its source ends.
+      source.onended = () => {
+        source.disconnect();
+        gain.disconnect();
+      };
+      try {
+        source.stop(atSec + fadeSec + STOP_PADDING_SECONDS);
+      } catch {
+        // Stopping an already-stopped source can throw; ignore it.
       }
     }
   }

@@ -15,18 +15,29 @@
 import type { TrackNode, TransitionEdge } from "../domain/types";
 import { findNextEdge } from "../domain/playbackSequence";
 import { AudioEngine } from "./audioEngine";
-import { transitionTriggerOffset } from "./transitionTiming";
+import {
+  transitionTriggerOffset,
+  sanitizeFadeDuration,
+} from "./transitionTiming";
 
 // A cycle (A -> B -> A) is allowed to keep playing until the user stops it.
 // This cap only exists so a runaway chain cannot schedule forever.
 const MAX_SEQUENCE_STEPS = 100;
 
-/** Called with the node now playing, or null when the sequence ends. */
-type NowPlayingListener = (nodeId: string | null) => void;
+/**
+ * How the sequence reports itself to the UI.
+ * - onNowPlaying: the node now playing, or null when the sequence ends.
+ * - onTransitionEdge: the edge being crossed while its fade lasts, then null.
+ *   It changes twice per handover, so the UI can hold it in plain state.
+ */
+type SequenceListeners = {
+  onNowPlaying: (nodeId: string | null) => void;
+  onTransitionEdge: (edgeId: string | null) => void;
+};
 
 export class SequencePlayer {
   private engine: AudioEngine;
-  private onNowPlaying: NowPlayingListener;
+  private listeners: SequenceListeners;
 
   // The graph snapshot for the running sequence, empty when stopped.
   private nodes: TrackNode[] = [];
@@ -35,12 +46,16 @@ export class SequencePlayer {
   // The pending timer for the next step, or null when nothing is scheduled.
   private timerId: number | null = null;
 
+  // The timer that ends the "crossing this edge" report once the fade is over.
+  // Separate from timerId because it runs alongside the next step's timer.
+  private transitionTimerId: number | null = null;
+
   // How many nodes this sequence has played, for the runaway guard.
   private stepCount = 0;
 
-  constructor(engine: AudioEngine, onNowPlaying: NowPlayingListener) {
+  constructor(engine: AudioEngine, listeners: SequenceListeners) {
     this.engine = engine;
-    this.onNowPlaying = onNowPlaying;
+    this.listeners = listeners;
   }
 
   /**
@@ -59,18 +74,20 @@ export class SequencePlayer {
     this.stepCount = 1;
 
     const { durationSec } = this.engine.startNode(startNode);
-    this.onNowPlaying(startNode.id);
+    this.listeners.onNowPlaying(startNode.id);
     this.scheduleNextStep(startNode, durationSec);
   }
 
   /** Stop the sequence and its audio. Safe to call when nothing is playing. */
   stop(): void {
     this.clearTimer();
+    this.clearTransitionTimer();
     this.nodes = [];
     this.edges = [];
     this.stepCount = 0;
     this.engine.stop();
-    this.onNowPlaying(null);
+    this.listeners.onNowPlaying(null);
+    this.listeners.onTransitionEdge(null);
   }
 
   // Work out when this node hands over (or simply ends) and set the timer.
@@ -99,8 +116,22 @@ export class SequencePlayer {
   private advanceTo(edge: TransitionEdge, nextNode: TrackNode): void {
     this.stepCount += 1;
     const { durationSec } = this.engine.transitionToNode(edge, nextNode);
-    this.onNowPlaying(nextNode.id);
+    this.listeners.onNowPlaying(nextNode.id);
+    this.reportTransition(edge);
     this.scheduleNextStep(nextNode, durationSec);
+  }
+
+  // Report the edge as being crossed, and stop reporting it once the fade
+  // that defines the handover is over.
+  private reportTransition(edge: TransitionEdge): void {
+    this.clearTransitionTimer();
+    this.listeners.onTransitionEdge(edge.id);
+
+    const fadeSec = sanitizeFadeDuration(edge.fadeDurationSec);
+    this.transitionTimerId = window.setTimeout(() => {
+      this.transitionTimerId = null;
+      this.listeners.onTransitionEdge(null);
+    }, fadeSec * 1000);
   }
 
   private setTimer(callback: () => void, delaySec: number): void {
@@ -118,6 +149,13 @@ export class SequencePlayer {
     if (this.timerId !== null) {
       window.clearTimeout(this.timerId);
       this.timerId = null;
+    }
+  }
+
+  private clearTransitionTimer(): void {
+    if (this.transitionTimerId !== null) {
+      window.clearTimeout(this.transitionTimerId);
+      this.transitionTimerId = null;
     }
   }
 }

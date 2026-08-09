@@ -18,13 +18,15 @@
 import { useRef } from "react";
 import type { RefObject } from "react";
 import type { Track, TrackNode as TrackNodeType } from "../domain/types";
+import type { PlaybackProgress } from "../audio/playbackProgress";
 import { NODE_WIDTH, NODE_HEIGHT } from "./canvasLayout";
+import NodeProgress from "./NodeProgress";
 
 type TrackNodeProps = {
   node: TrackNodeType;
   track?: Track;
   isSelected: boolean;
-  // True for the node a running sequence is currently playing.
+  // True for the node currently playing (single Play or a sequence step).
   isPlaying: boolean;
   // True for the source node while connection mode is active.
   isConnectionSource: boolean;
@@ -33,6 +35,9 @@ type TrackNodeProps = {
   // The canvas element, owned by NodeCanvas, used to map mouse coordinates
   // into canvas space. TrackNode never queries the DOM for it directly.
   canvasRef: RefObject<HTMLElement | null>;
+  // Read by the progress display while this node plays. Passed as a getter so
+  // the node never holds audio state of its own.
+  getPlaybackProgress: () => PlaybackProgress | null;
   onSelect: () => void;
   onClickNode: () => void;
   onMove: (x: number, y: number) => void;
@@ -46,6 +51,7 @@ function TrackNode({
   isConnectionSource,
   isConnecting,
   canvasRef,
+  getPlaybackProgress,
   onSelect,
   onClickNode,
   onMove,
@@ -131,6 +137,11 @@ function TrackNode({
       <span className="track-node-label">{node.label}</span>
       {track?.artist && (
         <span className="track-node-artist">{track.artist}</span>
+      )}
+      {/* Mounted only while this node plays, so its animation loop exists
+          only when there is something to animate. */}
+      {isPlaying && (
+        <NodeProgress nodeId={node.id} getProgress={getPlaybackProgress} />
       )}
     </div>
   );

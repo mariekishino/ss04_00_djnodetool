@@ -26,6 +26,7 @@
 
 import type { TransitionEdge, TrackNode } from "../domain/types";
 import { TrackAudioStore } from "./trackAudioStore";
+import type { PlaybackProgress } from "./playbackProgress";
 import { soundForNode } from "./nodeSound";
 import {
   sanitizeFadeDuration,
@@ -65,6 +66,17 @@ export class AudioEngine {
   // Every voice currently scheduled or playing. playNode adds one; a crossfade
   // adds two. stop() clears them all.
   private activeVoices: Voice[] = [];
+
+  // Phase 13: what the progress display reads. Set whenever a node starts as
+  // a real track, cleared by stop(). startedAtSec is on the AudioContext
+  // clock and can be in the future (a `fade` target starts after the fade).
+  // Placeholder (oscillator) nodes leave this null: their length is a
+  // scheduling device, not a position in a track.
+  private currentPlayback: {
+    nodeId: string;
+    startedAtSec: number;
+    durationSec: number;
+  } | null = null;
 
   // Lazily create (or resume) the AudioContext. Called from the play methods so
   // the context is only created in response to a user action.
@@ -159,6 +171,7 @@ export class AudioEngine {
     const voice = this.startVoice(node, now);
     // Attack ramp from 0 to PLAY_GAIN to avoid a click.
     voice.gain.gain.linearRampToValueAtTime(PLAY_GAIN, now + ATTACK_SECONDS);
+    this.setCurrentPlayback(node, now);
   }
 
   // Play a transition between two nodes as a preview. Stops any current
@@ -209,6 +222,30 @@ export class AudioEngine {
     }
   }
 
+  // Remember where playback is, for the progress display. Only tracks with
+  // imported audio have a real position; placeholder nodes clear it.
+  private setCurrentPlayback(node: TrackNode, startedAtSec: number): void {
+    const buffer = this.trackAudio.get(node.trackId);
+    this.currentPlayback = buffer
+      ? { nodeId: node.id, startedAtSec, durationSec: buffer.duration }
+      : null;
+  }
+
+  /**
+   * Where playback currently is, or null when nothing with a real position
+   * is playing. Read repeatedly by the UI while it animates, so it stays a
+   * cheap computation over plain numbers.
+   */
+  playbackProgress(): PlaybackProgress | null {
+    if (!this.context || !this.currentPlayback) return null;
+    const { nodeId, startedAtSec, durationSec } = this.currentPlayback;
+    return {
+      nodeId,
+      elapsedSec: this.context.currentTime - startedAtSec,
+      durationSec,
+    };
+  }
+
   // How long a node plays before a sequence moves on: the imported audio's
   // own length, or the placeholder length for a node still using the
   // oscillator (which would otherwise never end).
@@ -227,6 +264,7 @@ export class AudioEngine {
 
     const now = context.currentTime;
     this.rampIn(this.startVoice(node, now), now, MIN_FADE_SECONDS);
+    this.setCurrentPlayback(node, now);
     return { durationSec: this.durationForNode(node) };
   }
 
@@ -247,6 +285,7 @@ export class AudioEngine {
         // Drop the outgoing track over a click-avoiding ramp only.
         this.fadeOutActiveVoices(now, MIN_FADE_SECONDS);
         this.rampIn(this.startVoice(targetNode, now), now, MIN_FADE_SECONDS);
+        this.setCurrentPlayback(targetNode, now);
         break;
       }
       case "fade": {
@@ -258,12 +297,15 @@ export class AudioEngine {
           targetStart,
           MIN_FADE_SECONDS,
         );
+        // Starts in the future: progress reads 0 until the fade finishes.
+        this.setCurrentPlayback(targetNode, targetStart);
         break;
       }
       case "crossfade": {
         // Both play together: outgoing 1->0 while target 0->1 over `fade`.
         this.fadeOutActiveVoices(now, fade);
         this.rampIn(this.startVoice(targetNode, now), now, fade);
+        this.setCurrentPlayback(targetNode, now);
         break;
       }
     }
@@ -329,6 +371,8 @@ export class AudioEngine {
   stop(): void {
     const voices = this.activeVoices;
     this.activeVoices = [];
+    // Nothing is playing, so there is no position to report.
+    this.currentPlayback = null;
     if (!this.context) return;
 
     const now = this.context.currentTime;

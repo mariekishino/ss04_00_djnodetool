@@ -11,6 +11,7 @@
 
 import { useRef } from "react";
 import type { Track } from "../domain/types";
+import { formatTime } from "./formatTime";
 
 /**
  * Display info for a track whose audio was imported this session.
@@ -27,14 +28,6 @@ type TrackLibraryProps = {
   onAddToCanvas: (trackId: string) => void;
   onImportAudio: (trackId: string, file: File) => void;
 };
-
-// Format a duration in seconds as m:ss for the loaded-audio indicator.
-function formatDuration(durationSec: number): string {
-  const totalSeconds = Math.round(durationSec);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
 
 // One track's "Load audio" control: a visible button driving a hidden file
 // input (same pattern as ProjectToolbar's Import JSON). A separate component
@@ -100,7 +93,7 @@ function TrackLibrary({
               )}
               {loaded && (
                 <span className="track-audio-loaded">
-                  ♪ {loaded.fileName} ({formatDuration(loaded.durationSec)})
+                  ♪ {loaded.fileName} ({formatTime(loaded.durationSec)})
                 </span>
               )}
               <div className="track-item-actions">

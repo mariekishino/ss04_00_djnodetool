@@ -23,6 +23,7 @@
 
 import { useRef } from "react";
 import type { Track, TrackNode as TrackNodeType, TransitionEdge } from "../domain/types";
+import type { PlaybackProgress } from "../audio/playbackProgress";
 import TrackNode from "./TrackNode";
 import EdgeView from "./EdgeView";
 
@@ -33,7 +34,11 @@ type NodeCanvasProps = {
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
   playingNodeId: string | null;
+  // The edge a running sequence is crossing right now, or null.
+  transitioningEdgeId: string | null;
   connectionSourceId: string | null;
+  // Read by the playing node's progress display; see TrackNode.
+  getPlaybackProgress: () => PlaybackProgress | null;
   onSelectNode: (id: string) => void;
   onNodeClick: (id: string) => void;
   onEdgeClick: (id: string) => void;
@@ -50,7 +55,9 @@ function NodeCanvas({
   selectedNodeId,
   selectedEdgeId,
   playingNodeId,
+  transitioningEdgeId,
   connectionSourceId,
+  getPlaybackProgress,
   onSelectNode,
   onNodeClick,
   onEdgeClick,
@@ -96,6 +103,7 @@ function NodeCanvas({
               toNode={toNode}
               markerId={ARROW_MARKER_ID}
               isSelected={edge.id === selectedEdgeId}
+              isTransitioning={edge.id === transitioningEdgeId}
               onSelect={() => onEdgeClick(edge.id)}
             />
           );
@@ -111,6 +119,7 @@ function NodeCanvas({
           isConnectionSource={node.id === connectionSourceId}
           isConnecting={isConnecting}
           canvasRef={canvasRef}
+          getPlaybackProgress={getPlaybackProgress}
           onSelect={() => onSelectNode(node.id)}
           onClickNode={() => onNodeClick(node.id)}
           onMove={(x, y) => onMoveNode(node.id, x, y)}

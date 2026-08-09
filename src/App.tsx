@@ -36,6 +36,12 @@
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 //
+// Phase 13: "Playback progress". The playing node shows a progress bar and
+// elapsed / total time, and the edge being crossed lights up during the fade.
+// App holds the (rarely changing) transitioning edge id in state and hands the
+// canvas a getter for the moving position, which NodeProgress polls on its own
+// animation frame so App is not re-rendered per frame.
+//
 // Phase 12: "Sequential playback". "Play from here" starts a SequencePlayer
 // that walks the graph from the selected node, handing over to the next track
 // at each edge. App keeps nowPlayingNodeId in state (fed by the player's
@@ -113,21 +119,35 @@ function App() {
     Map<string, TrackAudioInfo>
   >(new Map());
 
-  // The node a running sequence is playing, or null when none is running.
-  // Written only by the SequencePlayer's callback below.
+  // The node currently playing, whether from a single Play or as a step of a
+  // sequence, or null when nothing is playing. The SequencePlayer's callback
+  // writes it during a sequence; handlePlayNode writes it for a single node.
   const [nowPlayingNodeId, setNowPlayingNodeId] = useState<string | null>(null);
 
+  // The edge a running sequence is crossing, while its fade lasts. It changes
+  // only twice per handover, so plain state is enough (the moving progress
+  // bar is animated separately, inside NodeProgress).
+  const [transitioningEdgeId, setTransitioningEdgeId] = useState<string | null>(
+    null,
+  );
+
   // The sequential player, created on first use like the engine. It reports
-  // each step back through setNowPlayingNodeId so the UI can follow along.
+  // each step back through these listeners so the UI can follow along.
   const sequencePlayerRef = useRef<SequencePlayer | null>(null);
   function getSequencePlayer(): SequencePlayer {
     if (!sequencePlayerRef.current) {
-      sequencePlayerRef.current = new SequencePlayer(
-        getAudioEngine(),
-        setNowPlayingNodeId,
-      );
+      sequencePlayerRef.current = new SequencePlayer(getAudioEngine(), {
+        onNowPlaying: setNowPlayingNodeId,
+        onTransitionEdge: setTransitioningEdgeId,
+      });
     }
     return sequencePlayerRef.current;
+  }
+
+  // Where playback currently is, read repeatedly by the playing node's
+  // progress display. A getter, so App does not re-render for each frame.
+  function getPlaybackProgress() {
+    return audioEngineRef.current?.playbackProgress() ?? null;
   }
 
   // Release audio resources when the app unmounts. The sequence is stopped
@@ -376,8 +396,10 @@ function App() {
   // user gesture, so this is where the AudioContext first comes to life.
   // A running sequence is stopped first: the two playback modes are exclusive.
   function handlePlayNode(node: TrackNodeData) {
+    // stop() clears the "now playing" state, so mark this node after it.
     getSequencePlayer().stop();
     getAudioEngine().playNode(node);
+    setNowPlayingNodeId(node.id);
   }
 
   // Start sequential playback from a node, following edges through the graph.
@@ -445,7 +467,9 @@ function App() {
         selectedNodeId={selectedNodeId}
         selectedEdgeId={selectedEdgeId}
         playingNodeId={nowPlayingNodeId}
+        transitioningEdgeId={transitioningEdgeId}
         connectionSourceId={connectionSourceId}
+        getPlaybackProgress={getPlaybackProgress}
         onSelectNode={selectNode}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}

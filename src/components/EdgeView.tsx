@@ -19,6 +19,9 @@ type EdgeViewProps = {
   // Shared SVG marker id for the arrowhead, defined once by NodeCanvas.
   markerId: string;
   isSelected: boolean;
+  // True while a running sequence is handing over across this edge, for the
+  // few seconds its fade lasts.
+  isTransitioning: boolean;
   onSelect: () => void;
 };
 
@@ -34,10 +37,19 @@ function EdgeView({
   toNode,
   markerId,
   isSelected,
+  isTransitioning,
   onSelect,
 }: EdgeViewProps) {
   const from = nodeCenter(fromNode);
   const to = nodeCenter(toNode);
+
+  const lineClassName = [
+    "edge-line",
+    isSelected ? "selected" : "",
+    isTransitioning ? "transitioning" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <g>
@@ -58,7 +70,7 @@ function EdgeView({
       {/* The visible edge. pointer-events are disabled so only the hit line
           handles clicks. */}
       <line
-        className={isSelected ? "edge-line selected" : "edge-line"}
+        className={lineClassName}
         x1={from.x}
         y1={from.y}
         x2={to.x}

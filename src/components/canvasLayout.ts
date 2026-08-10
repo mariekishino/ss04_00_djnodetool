@@ -5,4 +5,6 @@
 // (for rendering) and EdgeView (for line geometry) read these values.
 
 export const NODE_WIDTH = 140;
-export const NODE_HEIGHT = 60;
+// Phase 13: tall enough to hold the playing node's time readout and progress
+// bar without the label being pushed out of the box.
+export const NODE_HEIGHT = 82;

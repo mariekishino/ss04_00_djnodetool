@@ -35,6 +35,24 @@
 // Phase 10: "Edge editing". The Inspector can change a selected edge's
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
+//
+// Phase 13: "Playback progress". The playing node shows a progress bar and
+// elapsed / total time, and the edge being crossed lights up during the fade.
+// App holds the (rarely changing) transitioning edge id in state and hands the
+// canvas a getter for the moving position, which NodeProgress polls on its own
+// animation frame so App is not re-rendered per frame.
+//
+// Phase 12: "Sequential playback". "Play from here" starts a SequencePlayer
+// that walks the graph from the selected node, handing over to the next track
+// at each edge. App keeps nowPlayingNodeId in state (fed by the player's
+// callback) so the canvas can highlight the node being played, and Stop stops
+// the sequence as well as the audio.
+//
+// Phase 11: "Audio file import". App owns the TrackAudioStore (decoded audio
+// per track, in-memory only) and passes it to the AudioEngine. "Load audio"
+// in the Track Library decodes a picked file via the engine; trackAudioInfo
+// mirrors what is loaded (file name + duration) as React state for display.
+// Nothing audio-related is saved to the project JSON in this phase.
 
 import { useEffect, useRef, useState } from "react";
 // The type and the component are both named TrackNode; alias the type to
@@ -53,7 +71,9 @@ import {
 } from "./domain/edgeRules";
 import { downloadProject, parseProject } from "./storage/projectStorage";
 import { AudioEngine } from "./audio/audioEngine";
-import TrackLibrary from "./components/TrackLibrary";
+import { TrackAudioStore } from "./audio/trackAudioStore";
+import { SequencePlayer } from "./audio/sequencePlayer";
+import TrackLibrary, { type TrackAudioInfo } from "./components/TrackLibrary";
 import ProjectToolbar from "./components/ProjectToolbar";
 import NodeCanvas from "./components/NodeCanvas";
 import InspectorPanel from "./components/InspectorPanel";
@@ -74,16 +94,68 @@ function App() {
   // cleanup), never during render, so PlayerControls receives plain callbacks
   // and the UI never touches the engine directly.
   const audioEngineRef = useRef<AudioEngine | null>(null);
+
+  // Decoded audio per track, shared between the engine (playback) and the
+  // future Analyzer. Lives in a ref because it is not render state; the
+  // displayable part is mirrored in trackAudioInfo below.
+  const trackAudioStoreRef = useRef<TrackAudioStore | null>(null);
+  function getTrackAudioStore(): TrackAudioStore {
+    if (!trackAudioStoreRef.current) {
+      trackAudioStoreRef.current = new TrackAudioStore();
+    }
+    return trackAudioStoreRef.current;
+  }
+
   function getAudioEngine(): AudioEngine {
     if (!audioEngineRef.current) {
-      audioEngineRef.current = new AudioEngine();
+      audioEngineRef.current = new AudioEngine(getTrackAudioStore());
     }
     return audioEngineRef.current;
   }
 
-  // Release audio resources when the app unmounts.
+  // What audio is loaded per track (file name + duration), for the Track
+  // Library display. In-memory only, like the store: gone after a reload.
+  const [trackAudioInfo, setTrackAudioInfo] = useState<
+    Map<string, TrackAudioInfo>
+  >(new Map());
+
+  // The node currently playing, whether from a single Play or as a step of a
+  // sequence, or null when nothing is playing. The SequencePlayer's callback
+  // writes it during a sequence; handlePlayNode writes it for a single node.
+  const [nowPlayingNodeId, setNowPlayingNodeId] = useState<string | null>(null);
+
+  // The edge a running sequence is crossing, while its fade lasts. It changes
+  // only twice per handover, so plain state is enough (the moving progress
+  // bar is animated separately, inside NodeProgress).
+  const [transitioningEdgeId, setTransitioningEdgeId] = useState<string | null>(
+    null,
+  );
+
+  // The sequential player, created on first use like the engine. It reports
+  // each step back through these listeners so the UI can follow along.
+  const sequencePlayerRef = useRef<SequencePlayer | null>(null);
+  function getSequencePlayer(): SequencePlayer {
+    if (!sequencePlayerRef.current) {
+      sequencePlayerRef.current = new SequencePlayer(getAudioEngine(), {
+        onNowPlaying: setNowPlayingNodeId,
+        onTransitionEdge: setTransitioningEdgeId,
+      });
+    }
+    return sequencePlayerRef.current;
+  }
+
+  // Where playback currently is, read repeatedly by the playing node's
+  // progress display. A getter, so App does not re-render for each frame.
+  function getPlaybackProgress() {
+    return audioEngineRef.current?.playbackProgress() ?? null;
+  }
+
+  // Release audio resources when the app unmounts. The sequence is stopped
+  // first so no pending timer fires against a disposed engine.
   useEffect(() => {
     return () => {
+      sequencePlayerRef.current?.stop();
+      sequencePlayerRef.current = null;
       audioEngineRef.current?.dispose();
       audioEngineRef.current = null;
     };
@@ -231,6 +303,26 @@ function App() {
     reader.readAsText(file);
   }
 
+  // Import an audio file for a track: decode it via the engine (which stores
+  // the result in the TrackAudioStore) and record file name + duration for
+  // display. On a failed decode the store is unchanged and a simple message
+  // is shown, same pattern as JSON import.
+  async function handleImportTrackAudio(trackId: string, file: File) {
+    try {
+      const { durationSec } = await getAudioEngine().importTrackAudio(
+        trackId,
+        file,
+      );
+      setTrackAudioInfo((current) =>
+        new Map(current).set(trackId, { fileName: file.name, durationSec }),
+      );
+    } catch {
+      window.alert(
+        `Could not load "${file.name}". It may not be a supported audio file.`,
+      );
+    }
+  }
+
   // Enter connection mode using the currently selected node as the source.
   function handleStartConnection() {
     if (selectedNodeId) {
@@ -296,10 +388,23 @@ function App() {
     ? (project.nodes.find((node) => node.id === selectedEdge.toNodeId) ?? null)
     : null;
 
+  // The node a running sequence is playing (or null), used for the status line.
+  const nowPlayingNode =
+    project.nodes.find((node) => node.id === nowPlayingNodeId) ?? null;
+
   // Play a node's sound via the (lazily created) audio engine. Called from a
   // user gesture, so this is where the AudioContext first comes to life.
+  // A running sequence is stopped first: the two playback modes are exclusive.
   function handlePlayNode(node: TrackNodeData) {
+    // stop() clears the "now playing" state, so mark this node after it.
+    getSequencePlayer().stop();
     getAudioEngine().playNode(node);
+    setNowPlayingNodeId(node.id);
+  }
+
+  // Start sequential playback from a node, following edges through the graph.
+  function handlePlaySequence(startNode: TrackNodeData) {
+    getSequencePlayer().start(project.nodes, project.edges, startNode);
   }
 
   // Play an edge's transition between its source and target nodes.
@@ -308,12 +413,13 @@ function App() {
     sourceNode: TrackNodeData,
     targetNode: TrackNodeData,
   ) {
+    getSequencePlayer().stop();
     getAudioEngine().playTransition(edge, sourceNode, targetNode);
   }
 
-  // Stop any current playback.
+  // Stop any current playback, including a running sequence.
   function handleStop() {
-    getAudioEngine().stop();
+    getSequencePlayer().stop();
   }
 
   return (
@@ -325,7 +431,9 @@ function App() {
         />
         <TrackLibrary
           tracks={project.tracks}
+          audioInfo={trackAudioInfo}
           onAddToCanvas={handleAddToCanvas}
+          onImportAudio={handleImportTrackAudio}
         />
         <InspectorPanel
           tracks={project.tracks}
@@ -345,7 +453,9 @@ function App() {
           selectedEdge={selectedEdge}
           sourceNode={transitionSourceNode}
           targetNode={transitionTargetNode}
+          nowPlayingNode={nowPlayingNode}
           onPlayNode={handlePlayNode}
+          onPlaySequence={handlePlaySequence}
           onPlayTransition={handlePlayTransition}
           onStop={handleStop}
         />
@@ -356,7 +466,10 @@ function App() {
         edges={project.edges}
         selectedNodeId={selectedNodeId}
         selectedEdgeId={selectedEdgeId}
+        playingNodeId={nowPlayingNodeId}
+        transitioningEdgeId={transitioningEdgeId}
         connectionSourceId={connectionSourceId}
+        getPlaybackProgress={getPlaybackProgress}
         onSelectNode={selectNode}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}

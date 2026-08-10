@@ -1413,3 +1413,90 @@ Post-MVP work starts with the audio file import phase: file selection and
 persistence strategy, decode via `decodeAudioData`, and the first real
 `Player` use of PCM — the point where the Player / Analyzer boundary
 (2026-07-10 entry) becomes concrete.
+
+---
+
+## 2026-07-26: Phase 11 Implementation Decisions (Audio File Import)
+
+### Context
+
+Phase 11 is the first post-MVP phase: real audio playback from a locally
+picked MP3/WAV file, replacing the oscillator placeholder for tracks that
+have a file loaded. It resolves the design questions carried over from the
+MVP completion discussion (2026-07-12 record, section 5) and is the phase
+where the Player / Analyzer boundary (2026-07-10 entry) first became
+concrete. The approved plan is `docs/plans/phase11_audio_file_import.md`.
+
+### Decisions
+
+#### 1. Persistence: in-memory only
+
+Decision:
+
+A picked file is decoded and held in memory. Nothing audio-related is
+saved to the project JSON (not even the file name), and audio is gone
+after a reload.
+
+Reason:
+
+Object URLs die on reload, so "just save the URL" cannot work. IndexedDB
+or the File System Access API would pull the phase's focus away from
+decoding and playback. Persistent audio storage is a future phase that
+slots in behind the same store interface. Re-linking files by name is a
+future convenience deliberately left out.
+
+#### 2. Decode once, at import time
+
+Decision:
+
+File pick -> `file.arrayBuffer()` -> `decodeAudioData` -> the decoded
+`AudioBuffer` is kept. Playback never decodes. The file pick is a user
+gesture, so the engine's lazy `AudioContext` may be created there.
+
+#### 3. Decoded PCM lives in a dedicated store (TrackAudioStore)
+
+Decision:
+
+New module `src/audio/trackAudioStore.ts` maps `trackId -> AudioBuffer`.
+App owns the store and passes it to the `AudioEngine`. The Player side
+reads `AudioBuffer`s; the future Analyzer side gets plain
+`{ samples: Float32Array, sampleRate }` via `pcmFor()`.
+
+Reason:
+
+Decoded PCM is shared data (Player today, Analyzer later), so neither
+side should own it. `pcmFor()` enforces the 2026-07-10 rule that Web
+Audio types never cross the Analyzer boundary.
+
+#### 4. The swap point worked as recorded
+
+Decision (confirmation):
+
+Only `createSourceForNode` changed for playback: it returns an
+`AudioBufferSourceNode` when the node's track has audio in the store,
+and the oscillator otherwise. The gain-envelope / transition logic is
+untouched, as promised by the Phase 8 entry ("Single swap point").
+
+#### 5. Analysis result storage stays undecided
+
+Decision:
+
+Question 3 from the 2026-07-12 list (where `AnalysisResult` lives) is
+deferred until an Analyzer implementation exists. `AnalysisResult`
+remains restricted to serializable data.
+
+### Accepted trade-offs
+
+- Real audio plays at the same fixed gain as the oscillator (0.2), so
+  imported tracks sound quiet; loudness tuning is future work.
+- Playback always starts at the beginning of the file; no seeking or
+  per-node offsets.
+- Re-importing a file for a track replaces its buffer silently.
+
+### Verification
+
+27 unit tests pass (4 new for `TrackAudioStore`). Browser-driven check
+with a generated 2-second WAV: load -> indicator, node playback,
+crossfade transition playback, and a rejected non-audio file (alert, no
+state change), all with no console errors. Audible confirmation was done
+by the developer.

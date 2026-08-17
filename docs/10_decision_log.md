@@ -1755,3 +1755,177 @@ the readout 0:00 -> 0:01; the edge lit at the 1.48s handover and went dark
 0.67s later (0.6s fade); Stop cleared bar, glow and status; a placeholder
 node showed no bar. Node and bar bounding boxes measured inside the node
 box. No console errors.
+
+---
+
+## 2026-08-17: Phase 14 Implementation Decisions (Local Server Persistence)
+
+### Context
+
+Until now nothing survived a reload: imported audio lived in memory only
+(Phase 11, decision 1) and the project existed in React state unless the
+user exported a JSON file by hand. Feedback on a weekly report asked
+whether the app was browser-only and pointed out that a small local server
+would cover file storage without needing a database.
+
+That reframed the persistence question, which had been left open since
+Phase 11. The options were compared in
+`docs/discussions/2026-07-26_phase12_13_and_persistence_options.md` and the
+approved plan is `docs/plans/phase14_local_server_persistence.md`.
+
+### Decisions
+
+#### 1. A local server, not browser storage
+
+Decision:
+
+Audio files sit in a git-ignored `audio/` folder and are served over HTTP;
+the project JSON is read and written by the same server into `data/`.
+
+Reason:
+
+The music stays as ordinary files the developer can inspect, back up and
+manage. IndexedDB would copy it into the browser profile, where it is
+hidden and subject to quotas; the File System Access API avoids copying but
+is effectively Chrome-only and still needs IndexedDB to persist its
+handles. This also makes `Track.audioUrl` — in the domain model since the
+first phase and unused ever since — mean what it says.
+
+#### 2. The frontend-only rule is amended, not broken
+
+Decision:
+
+`CLAUDE.md` now records that a local server exists and fixes its scope:
+serve `audio/`, read/write one project JSON. No authentication, no
+database, no upload endpoint, no cloud sync.
+
+Reason:
+
+The old rule said "frontend-only architecture **for MVP**" and "do not add
+a backend unless explicitly requested". The MVP was declared complete on
+2026-07-12 and this server was explicitly requested, so nothing is
+violated — but a later session reading only `CLAUDE.md` would have been
+misled. Writing the fence down matters more than the permission.
+
+#### 3. Files are placed by hand; the app never uploads
+
+Decision:
+
+The developer copies audio into `audio/`; the app lists what is there.
+
+Reason:
+
+Removes multipart handling entirely. See the known gap below for the cost
+this turned out to have in practice.
+
+#### 4. Server-saved project, with file Export/Import kept
+
+Decision:
+
+The project loads from the server at startup and is saved by an explicit
+Save button. `Export JSON` / `Import JSON` are unchanged.
+
+Reason:
+
+Server storage is the everyday path; the file remains the way to take a
+backup or move a project elsewhere. Saving stays explicit rather than
+automatic so it is predictable.
+
+#### 5. The app works with no server running
+
+Decision:
+
+Without a server the app opens on the mock project, offers the previous
+session-only file picker, and disables Save.
+
+#### 6. Plain JavaScript, no dependencies, no build step
+
+Decision:
+
+`server/index.js` uses Node's built-in `http`/`fs` modules only.
+
+Reason:
+
+Express would be a new major dependency for about a hundred lines, and
+compiling TypeScript for the server would add a build step to a project
+that currently has one command per job. The accepted cost is that server
+code is not type-checked.
+
+#### 7. "Nothing saved yet" is a 200, not a 404
+
+Decision:
+
+`GET /api/project` answers `200 {"project": null}` when no project has been
+saved.
+
+Reason:
+
+Found during verification: 404 is defensible REST, but a fresh checkout
+then greets the developer with failed requests logged in the console for a
+completely normal state. Under React's StrictMode the effect runs twice in
+development, so it appeared twice.
+
+#### 8. Availability is judged by status, not only by a rejected fetch
+
+Decision:
+
+A non-OK response to `/api/tracks` or `/api/project` counts as "server not
+reachable", alongside a rejected `fetch`.
+
+Reason:
+
+Also found during verification, and the more important of the two: behind
+the Vite dev proxy a stopped backend produces an HTTP 500, not a failed
+connection. Detecting only rejections left the app believing an empty
+server was running — Save stayed enabled and the offline file picker never
+appeared. The offline path is now verified, not assumed.
+
+#### 9. validateProject is split out of parseProject
+
+Decision:
+
+`projectStorage` exports `validateProject(data: unknown)`, used by both the
+file import and the server response.
+
+Reason:
+
+A hand-edited `data/project.json` is exactly as untrusted as an imported
+file, and should meet the same rules.
+
+### Accepted trade-offs
+
+- Two processes to run in development (`npm run dev` and `npm run server`).
+- The server is plain JS, so it is not type-checked.
+- One project per checkout (`data/project.json`); naming or choosing among
+  several projects is future work.
+- Audio is served whole, with no range requests.
+
+### Known gap: no way to add a track
+
+Found immediately when the developer used their own music: audio files can
+only be attached to tracks that already exist, and the only tracks that
+ever exist are the two from `mockProject`. Placing a third file in `audio/`
+does nothing visible, because the Track Library lists project tracks, not
+files.
+
+The fix is small — a way to create a track from an audio file, taking its
+title from the file name — but it was **deliberately deferred on
+2026-08-17** rather than folded into this phase.
+
+### Verification
+
+66 unit tests pass (17 new: server path guards, `serverStorage` including
+its unavailable paths). Browser-driven check with the server running:
+attach audio from the folder, move a node, Save, reload — node position,
+both tracks' audio and playback all came back, with no console errors. With
+the server stopped: the app opened on mock data, Save was disabled and the
+session-only picker returned, with no errors. Path traversal
+(`/audio/../../package.json`) is refused with 400. Playback of a real 6 MB
+MP3 was confirmed audibly by the developer.
+
+### Next
+
+1. The known gap above: create a track from an audio file.
+2. An upload endpoint, if placing files by hand keeps being a chore —
+   the developer works on a remote VM, so every file has to be copied over.
+3. Seeking on the progress bar; per-track volume; the first Analyzer step.

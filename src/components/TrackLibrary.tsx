@@ -8,9 +8,14 @@
 // and passes the picked file up via onImportAudio. When audio is loaded,
 // the entry shows the file name and duration from audioInfo. The library
 // never touches audio APIs; App and the AudioEngine do the decoding.
+//
+// Phase 14: when the local server is running, the entry instead offers the
+// files in its audio folder, which is what makes a track's audio survive a
+// reload. The file picker remains as the fallback when there is no server.
 
 import { useRef } from "react";
 import type { Track } from "../domain/types";
+import type { ServerTrackFile } from "../storage/serverStorage";
 import { formatTime } from "./formatTime";
 
 /**
@@ -25,8 +30,12 @@ export type TrackAudioInfo = {
 type TrackLibraryProps = {
   tracks: Track[];
   audioInfo: Map<string, TrackAudioInfo>;
+  // The files in the server's audio folder. Null when the server is not
+  // running, in which case the session-only file picker is offered instead.
+  serverFiles: ServerTrackFile[] | null;
   onAddToCanvas: (trackId: string) => void;
   onImportAudio: (trackId: string, file: File) => void;
+  onChooseServerFile: (trackId: string, file: ServerTrackFile) => void;
 };
 
 // One track's "Load audio" control: a visible button driving a hidden file
@@ -70,11 +79,50 @@ function TrackAudioImport({
   );
 }
 
+// One track's server-file picker: choose a file from the audio folder. The
+// selected value is the track's current audioUrl, so the picker shows what is
+// attached after a reload.
+function ServerFilePicker({
+  trackId,
+  audioUrl,
+  serverFiles,
+  onChooseServerFile,
+}: {
+  trackId: string;
+  audioUrl: string | undefined;
+  serverFiles: ServerTrackFile[];
+  onChooseServerFile: (trackId: string, file: ServerTrackFile) => void;
+}) {
+  if (serverFiles.length === 0) {
+    return <span className="track-audio-hint">No files in audio/</span>;
+  }
+
+  return (
+    <select
+      className="server-file-select"
+      value={audioUrl ?? ""}
+      onChange={(event) => {
+        const chosen = serverFiles.find((f) => f.url === event.target.value);
+        if (chosen) onChooseServerFile(trackId, chosen);
+      }}
+    >
+      <option value="">Choose audio…</option>
+      {serverFiles.map((file) => (
+        <option key={file.url} value={file.url}>
+          {file.fileName}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function TrackLibrary({
   tracks,
   audioInfo,
+  serverFiles,
   onAddToCanvas,
   onImportAudio,
+  onChooseServerFile,
 }: TrackLibraryProps) {
   return (
     <aside className="track-library">
@@ -104,10 +152,19 @@ function TrackLibrary({
                 >
                   Add to Canvas
                 </button>
-                <TrackAudioImport
-                  trackId={track.id}
-                  onImportAudio={onImportAudio}
-                />
+                {serverFiles ? (
+                  <ServerFilePicker
+                    trackId={track.id}
+                    audioUrl={track.audioUrl}
+                    serverFiles={serverFiles}
+                    onChooseServerFile={onChooseServerFile}
+                  />
+                ) : (
+                  <TrackAudioImport
+                    trackId={track.id}
+                    onImportAudio={onImportAudio}
+                  />
+                )}
               </div>
             </li>
           );

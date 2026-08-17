@@ -36,6 +36,12 @@
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 //
+// Phase 14: "Local server persistence". At startup App asks the local server
+// for the saved project and the files in its audio folder; if the server is
+// not running it falls back to mockProject and the session-only file picker,
+// with saving disabled. A track's audio now lives at a URL (Track.audioUrl),
+// so it can be fetched again after a reload.
+//
 // Phase 13: "Playback progress". The playing node shows a progress bar and
 // elapsed / total time, and the edge being crossed lights up during the fade.
 // App holds the (rarely changing) transitioning edge id in state and hands the
@@ -70,6 +76,13 @@ import {
   DEFAULT_FADE_SECONDS,
 } from "./domain/edgeRules";
 import { downloadProject, parseProject } from "./storage/projectStorage";
+import {
+  fetchServerTracks,
+  fetchServerProject,
+  saveServerProject,
+  audioFileNameFromUrl,
+  type ServerTrackFile,
+} from "./storage/serverStorage";
 import { AudioEngine } from "./audio/audioEngine";
 import { TrackAudioStore } from "./audio/trackAudioStore";
 import { SequencePlayer } from "./audio/sequencePlayer";
@@ -114,10 +127,31 @@ function App() {
   }
 
   // What audio is loaded per track (file name + duration), for the Track
-  // Library display. In-memory only, like the store: gone after a reload.
+  // Library display. Rebuilt each session; the durable part is Track.audioUrl.
   const [trackAudioInfo, setTrackAudioInfo] = useState<
     Map<string, TrackAudioInfo>
   >(new Map());
+
+  // The files in the server's audio folder, or null while unknown / when the
+  // server is not running. Null also drives the offline fallbacks in the UI.
+  const [serverFiles, setServerFiles] = useState<ServerTrackFile[] | null>(
+    null,
+  );
+
+  // The result of the last save attempt, shown in the toolbar. Null before any
+  // save this session.
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  // Record that a track's audio is loaded, for the Track Library display.
+  function rememberTrackAudio(
+    trackId: string,
+    fileName: string,
+    durationSec: number,
+  ) {
+    setTrackAudioInfo((current) =>
+      new Map(current).set(trackId, { fileName, durationSec }),
+    );
+  }
 
   // The node currently playing, whether from a single Play or as a step of a
   // sequence, or null when nothing is playing. The SequencePlayer's callback
@@ -149,6 +183,53 @@ function App() {
   function getPlaybackProgress() {
     return audioEngineRef.current?.playbackProgress() ?? null;
   }
+
+  // Ask the local server, once, for its audio files and saved project. When it
+  // is not running everything below is skipped and the app keeps the mock
+  // project with serverFiles null, which is the offline mode.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFromServer() {
+      const [files, saved] = await Promise.all([
+        fetchServerTracks(),
+        fetchServerProject(),
+      ]);
+      if (cancelled || !files.available) return;
+
+      setServerFiles(files.value ?? []);
+      if (!saved.value) return;
+
+      setProject(saved.value);
+      // Fetch and decode the audio each saved track points at. One missing
+      // file must not stop the others, so failures are ignored per track.
+      for (const track of saved.value.tracks) {
+        if (cancelled) return;
+        if (!track.audioUrl) continue;
+        try {
+          const { durationSec } = await getAudioEngine().loadTrackAudioFromUrl(
+            track.id,
+            track.audioUrl,
+          );
+          if (cancelled) return;
+          rememberTrackAudio(
+            track.id,
+            audioFileNameFromUrl(track.audioUrl),
+            durationSec,
+          );
+        } catch {
+          // Left without audio; the track still appears in the library.
+        }
+      }
+    }
+
+    void loadFromServer();
+    return () => {
+      cancelled = true;
+    };
+    // Runs once on mount; the helpers it uses are stable for the app's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Release audio resources when the app unmounts. The sequence is stopped
   // first so no pending timer fires against a disposed engine.
@@ -307,18 +388,57 @@ function App() {
   // the result in the TrackAudioStore) and record file name + duration for
   // display. On a failed decode the store is unchanged and a simple message
   // is shown, same pattern as JSON import.
+  //
+  // This is the offline path (no server): the audio lasts for the session
+  // only, because a picked file has no URL the project could remember.
   async function handleImportTrackAudio(trackId: string, file: File) {
     try {
       const { durationSec } = await getAudioEngine().importTrackAudio(
         trackId,
         file,
       );
-      setTrackAudioInfo((current) =>
-        new Map(current).set(trackId, { fileName: file.name, durationSec }),
-      );
+      rememberTrackAudio(trackId, file.name, durationSec);
     } catch {
       window.alert(
         `Could not load "${file.name}". It may not be a supported audio file.`,
+      );
+    }
+  }
+
+  // Attach one of the server's audio files to a track. The URL is written into
+  // the project, so saving and reloading brings the audio back.
+  async function handleChooseServerFile(
+    trackId: string,
+    file: ServerTrackFile,
+  ) {
+    setProject((current) => ({
+      ...current,
+      tracks: current.tracks.map((track) =>
+        track.id === trackId ? { ...track, audioUrl: file.url } : track,
+      ),
+    }));
+
+    try {
+      const { durationSec } = await getAudioEngine().loadTrackAudioFromUrl(
+        trackId,
+        file.url,
+      );
+      rememberTrackAudio(trackId, file.fileName, durationSec);
+    } catch {
+      window.alert(`Could not load "${file.fileName}" from the server.`);
+    }
+  }
+
+  // Save the project on the local server. The status line reports the result
+  // rather than interrupting with a dialog on the common (successful) path.
+  async function handleSave() {
+    setSaveStatus("Saving…");
+    const result = await saveServerProject(project);
+    if (result.value) {
+      setSaveStatus("Saved");
+    } else {
+      setSaveStatus(
+        result.available ? "Save failed" : "Server not running",
       );
     }
   }
@@ -426,14 +546,19 @@ function App() {
     <div className="app-layout">
       <div className="left-column">
         <ProjectToolbar
+          canSaveToServer={serverFiles !== null}
+          saveStatus={saveStatus}
+          onSave={handleSave}
           onExport={handleExport}
           onImportFile={handleImportFile}
         />
         <TrackLibrary
           tracks={project.tracks}
           audioInfo={trackAudioInfo}
+          serverFiles={serverFiles}
           onAddToCanvas={handleAddToCanvas}
           onImportAudio={handleImportTrackAudio}
+          onChooseServerFile={handleChooseServerFile}
         />
         <InspectorPanel
           tracks={project.tracks}

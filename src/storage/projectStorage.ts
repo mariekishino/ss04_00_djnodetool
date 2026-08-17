@@ -25,7 +25,15 @@ export function parseProject(text: string): Project {
   } catch {
     throw new Error("File is not valid JSON.");
   }
+  return validateProject(data);
+}
 
+// Validate already-parsed data as a Project, throwing on any problem.
+//
+// Phase 14: split out of parseProject so data that arrives as an object (from
+// the local server's JSON response) is checked by exactly the same rules as a
+// file the user imports.
+export function validateProject(data: unknown): Project {
   if (typeof data !== "object" || data === null) {
     throw new Error("Project JSON must be an object.");
   }

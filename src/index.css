@@ -180,11 +180,57 @@ code {
   align-self: center;
 }
 
-/* Picker of the files in the server's audio folder. */
-.server-file-select {
+/* Adding a track from the audio folder, above the list. */
+.add-track-select {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 5px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+}
+
+/* Shown in place of the picker when there is nothing to add. */
+.library-hint {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.7;
+}
+
+/* Matches the Inspector's delete buttons, since it is the same kind of
+   action. */
+.remove-track-button {
   align-self: flex-start;
   margin-top: 6px;
-  max-width: 100%;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.remove-track-button:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.remove-track-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Picker of the files in the server's audio folder. Takes a row of its own:
+   file names are long and the sidebar is narrow. */
+.server-file-select {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 2px;
   padding: 3px 6px;
   font-size: 12px;
   font-family: inherit;
@@ -284,6 +330,7 @@ code {
 
 .track-item-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

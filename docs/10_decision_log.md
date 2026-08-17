@@ -1929,3 +1929,61 @@ MP3 was confirmed audibly by the developer.
 2. An upload endpoint, if placing files by hand keeps being a chore —
    the developer works on a remote VM, so every file has to be copied over.
 3. Seeking on the progress bar; per-track volume; the first Analyzer step.
+
+---
+
+## 2026-08-17: Ignore Rules Are Anchored to the Repository Root
+
+### Context
+
+Phase 14 added a local server that serves audio from `audio/` and saves the
+project into `data/`. Both hold the developer's own material rather than
+source, so they were git-ignored — written, without much thought, as:
+
+```
+audio/
+data/
+```
+
+A `.gitignore` pattern with no leading slash matches at **every** level, so
+`audio/` also matched `src/audio/`, the audio layer of the application.
+
+Phase 16 added four modules there (`waveform.ts`, `waveformCache.ts` and
+their tests). `git add` skipped them silently — an ignored path is not an
+error — while the components importing them were committed normally. The
+result reached `main` through PR #7: a checkout of `main` could not build,
+failing with `Cannot find module './audio/waveformCache'`.
+
+### Why it went unnoticed
+
+Everything looked correct from inside the working tree, which still had the
+files: `npm run lint`, `tsc -b` and all 91 tests passed both before and
+after committing. Nothing in the normal loop reads what was actually
+recorded in the commit, so nothing contradicted the assumption that it had
+been.
+
+### Decision
+
+Ignore rules for repository-root folders are written anchored:
+
+```
+/audio/
+/data/
+```
+
+so they cannot match a directory of the same name elsewhere in the tree.
+
+### Decision: verify from a clean checkout when a phase adds a directory
+
+When a phase introduces files under a path that any ignore rule could
+plausibly match, verify the branch by cloning it and building from scratch,
+not only by building the working tree. That is how this was confirmed both
+broken and fixed.
+
+### Notes
+
+- The mistake is Phase 14's; the damage appeared two phases later, in code
+  that had nothing to do with it. A rule that is too broad stays quiet until
+  something new happens to fall inside it.
+- `git status --ignored` over `src/` lists exactly this class of problem and
+  costs nothing to run.

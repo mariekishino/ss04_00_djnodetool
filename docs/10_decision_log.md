@@ -1503,6 +1503,261 @@ by the developer.
 
 ---
 
+## 2026-07-26: Phase 12 Implementation Decisions (Sequential Playback)
+
+### Context
+
+Phase 12 is the first playback that walks the node graph: a track plays to
+its end, then hands over to the next one along its outgoing edge, and so on.
+Everything before it played a single node or a short two-track preview, so
+connecting nodes had no audible consequence beyond that preview.
+
+Phase 11 made this possible: real imported audio finally gives a track a
+natural length to play to. The approved plan is
+`docs/plans/phase12_sequential_playback.md`.
+
+### Decisions
+
+#### 1. A separate "Play from here" button
+
+Decision:
+
+Sequential playback starts from a new button; `Play` keeps its existing
+meaning of playing the selected node alone, and `Play transition` keeps
+previewing one edge.
+
+Reason:
+
+Single-node playback stays useful for checking that an imported file
+sounds right, which is a different task from listening through a set.
+Overloading `Play` would have removed that check with no way back.
+
+#### 2. Branching follows the first outgoing edge
+
+Decision:
+
+When a node has several outgoing edges, playback takes the first one in
+`project.edges` order. `findNextEdge` in `src/domain/playbackSequence.ts`
+is the single place this is decided.
+
+Reason:
+
+A stable, predictable route is what a first implementation needs; random
+or weighted routing, or asking the user at the branch, can replace that
+one function later without touching the player.
+
+#### 3. Cycles play until Stop, with a runaway guard
+
+Decision:
+
+A cycle (A -> B -> A) keeps playing until the user stops it.
+`MAX_SEQUENCE_STEPS` (100) exists only so a chain cannot schedule forever;
+it is a backstop, not a product rule.
+
+#### 4. Placeholder nodes get a fixed 5s length
+
+Decision:
+
+A node whose track has no imported audio plays its oscillator for
+`PLACEHOLDER_NODE_SECONDS` (5) and then hands over.
+
+Reason:
+
+An oscillator has no natural end, so sequential playback needs some
+length for it. A fixed short one keeps a half-loaded graph playable.
+
+#### 5. Transition trigger timing as a pure rule
+
+Decision:
+
+`transitionTriggerOffset(durationSec, transitionType, fadeSec)` decides
+when to leave a track: at `D` for `cut`, at `max(0, D - fade)` for `fade`
+and `crossfade`. A fade longer than the track clamps to 0.
+
+Reason:
+
+It sits next to the Phase 9 rules in `transitionTiming.ts` and is unit
+tested without any Web Audio involvement. Phase 9's rules describe how a
+transition sounds; this one describes when it starts.
+
+Note: the clamp is what makes a track shorter than its own fade hand over
+immediately. This looked like a bug during verification with 2-second test
+tracks and a default 3s fade; it is the documented behaviour, and does not
+arise with real tracks.
+
+#### 6. Step-by-step scheduling, not a pre-scheduled chain
+
+Decision:
+
+Each step sets a timer for the next one (`SequencePlayer`), instead of
+scheduling the whole chain up front.
+
+Reason:
+
+Stopping is then just "cancel the pending timer", and the running state is
+always one step. The cost is a few milliseconds of timer jitter, which is
+inaudible at preview grade. Sample-accurate scheduling would be worth it
+only for a beat-locked player, which this is not.
+
+#### 7. The graph is snapshotted when playback starts
+
+Decision:
+
+`SequencePlayer.start` copies the nodes and edges it was given; editing the
+graph mid-playback does not reroute a running sequence. Restart to pick up
+edits.
+
+Reason:
+
+Avoids a running sequence stepping into nodes that were deleted or edges
+that were rewired underneath it, with no state-syncing machinery.
+
+#### 8. The engine gains hand-over primitives
+
+Decision:
+
+`startNode` and `transitionToNode` are added alongside `playNode` /
+`playTransition`. The new pair does NOT stop everything first: the outgoing
+track is faded out while the incoming one comes in.
+
+Reason:
+
+The existing one-shot methods begin with `stop()`, which is right for a
+preview and wrong for a hand-over (it would leave a gap). Keeping both
+pairs means the preview behaviour is untouched.
+
+### Accepted trade-offs
+
+- Timer-driven steps drift by a few milliseconds versus sample-accurate
+  scheduling.
+- A sequence started before an edit keeps the old route (decision 7).
+- Placeholder nodes all last 5 seconds regardless of their metadata.
+
+### Verification
+
+37 unit tests pass (10 new: `findNextEdge`, `transitionTriggerOffset`).
+Browser-driven check with two 2-second WAVs and a 0.5s crossfade: handovers
+observed at 1.60s, 3.07s and 4.64s (expected every ~1.5s), cycling through
+a closed loop; Stop cleared the highlight and status; a node with no
+outgoing edge ended the sequence after 2.07s (its own length). No console
+errors. Audible confirmation was done by the developer.
+
+---
+
+## 2026-07-26: Phase 13 Implementation Decisions (Playback Progress)
+
+### Context
+
+Phase 12 showed which node was playing. Phase 13 answers "how far into it
+are we": the playing node carries a progress bar and an elapsed / total
+readout, and the edge being crossed lights up while the two tracks overlap.
+The approved plan is `docs/plans/phase13_playback_progress.md`.
+
+### Decisions
+
+#### 1. Position is measured on the AudioContext clock
+
+Decision:
+
+The engine records the audio-clock time a track starts at and reports
+`elapsedSec = context.currentTime - startedAtSec`.
+
+Reason:
+
+It is the clock the audio itself is scheduled on. `Date.now()` drifts away
+from what is heard, which a progress display would slowly expose. For a
+`fade` transition the target starts after the fade, so the recorded start
+time is in the future and elapsed clamps to 0 until it begins.
+
+#### 2. The engine exposes a plain snapshot, not Web Audio objects
+
+Decision:
+
+`playbackProgress(): { nodeId, elapsedSec, durationSec } | null`, with the
+type and the pure `progressRatio` living in `src/audio/playbackProgress.ts`.
+
+Reason:
+
+Same rule as the Analyzer boundary (2026-07-10): no `AudioBuffer` or
+`AudioNode` crosses into the UI, so the display never learns that Web Audio
+exists. `progressRatio` also absorbs the cases a bar must not break on
+(zero/invalid duration, elapsed past the end, negative elapsed).
+
+#### 3. Only the moving part re-renders per frame
+
+Decision:
+
+`NodeProgress` is mounted inside the playing node, polls the snapshot on
+`requestAnimationFrame` and holds the result in its own state. The edge
+glow, which changes twice per handover, is plain React state in App fed by
+a `SequencePlayer` callback.
+
+Reason:
+
+Re-rendering App 60 times a second to animate one bar would be wasteful.
+Splitting by how often a thing actually changes keeps both parts simple:
+an animation loop where there is animation, ordinary state where there is
+not.
+
+#### 4. No progress for placeholder nodes
+
+Decision:
+
+A node whose track has no imported audio reports no position, so it shows
+no bar.
+
+Reason:
+
+The 5s placeholder length (Phase 12, decision 4) is a scheduling device,
+not a position inside a track. A bar filling over it would state something
+untrue.
+
+#### 5. Single-node Play also marks its node as playing
+
+Decision:
+
+`handlePlayNode` sets the now-playing node, which `SequencePlayer` had
+previously been the only writer of.
+
+Reason:
+
+Progress was agreed for both playback modes, and the display is mounted
+inside the playing node. Without this, `Play` showed nothing. It also makes
+the green "playing" highlight consistent between the two modes.
+
+#### 6. Nodes are taller, with tighter line height
+
+Decision:
+
+`NODE_HEIGHT` 60 -> 82, plus explicit `line-height` on the node's label,
+artist and time text.
+
+Reason:
+
+The node is a fixed-size box (edges compute their geometry from the same
+constants), and the page's default line spacing pushed the label and the
+bar outside it. Measured in the browser: content now sits inside the box.
+
+### Accepted trade-offs
+
+- The bar is display-only; it cannot be dragged to seek. Web Audio has no
+  seek operation, so seeking means stopping the source and starting a new
+  one at an offset, plus rescheduling the sequence's next step.
+- During a crossfade the outgoing track is still audible while the
+  highlight and the progress have already moved to the incoming node; the
+  edge glow is what signals the overlap.
+
+### Verification
+
+47 unit tests pass (10 new: `progressRatio`, `formatTime`). Browser-driven
+check: with a 2-second WAV, single `Play` advanced the bar 18% -> 64% and
+the readout 0:00 -> 0:01; the edge lit at the 1.48s handover and went dark
+0.67s later (0.6s fade); Stop cleared bar, glow and status; a placeholder
+node showed no bar. Node and bar bounding boxes measured inside the node
+box. No console errors.
+
+---
+
 ## 2026-08-17: Phase 14 Implementation Decisions (Local Server Persistence)
 
 ### Context

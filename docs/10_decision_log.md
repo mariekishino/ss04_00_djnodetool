@@ -1929,3 +1929,324 @@ MP3 was confirmed audibly by the developer.
 2. An upload endpoint, if placing files by hand keeps being a chore —
    the developer works on a remote VM, so every file has to be copied over.
 3. Seeking on the progress bar; per-track volume; the first Analyzer step.
+
+---
+
+## 2026-08-17: Phase 15 Implementation Decisions (Adding and Removing Tracks)
+
+### Context
+
+The Phase 14 entry recorded a gap found the moment real music was used: a
+track's audio could be chosen from the `audio/` folder, but the only tracks
+that ever existed were the two from `mockProject`. Adding a third file to
+the folder changed nothing visible. The approved plan is
+`docs/plans/phase15_track_library_editing.md`.
+
+### Decisions
+
+#### 1. Tracks are added explicitly, not mirrored from the folder
+
+Decision:
+
+A file becomes a track by being chosen in "Add track from audio", never by
+appearing in `audio/`.
+
+Reason:
+
+Tracks are project data that nodes reference by id. If the library mirrored
+the folder, deleting a file would leave nodes pointing at a track that no
+longer exists, and there would be no way to work with a subset of a large
+folder. The library is "the songs chosen for this project".
+
+#### 2. Removal is blocked while a node uses the track
+
+Decision:
+
+A track can be removed, but the button is disabled while any node
+references it (`isTrackInUse`).
+
+Reason:
+
+Keeps the guarantee that a node's `trackId` always resolves, without
+cascading deletes that would make nodes disappear as a side effect of a
+click in the library.
+
+#### 3. The title comes from the file name
+
+Decision:
+
+`Midnight Piano Drift.mp3` becomes `Midnight Piano Drift`. Artist and BPM
+are left empty.
+
+Reason:
+
+A file name does not know the artist, and BPM is where a future Analyzer
+writes. Filling either with a guess would be inventing data.
+
+#### 4. Files already attached to a track are not offered again
+
+Decision:
+
+The add picker lists only files no track uses.
+
+Reason:
+
+A song appears twice in a set as two nodes of one track, not as two library
+entries, so a duplicate would be a mistake rather than a use case.
+
+#### 5. The mock tracks stay, but are now removable
+
+Decision:
+
+`mockProject` remains the first-run content; its tracks can be removed like
+any other.
+
+### Related fix: mockProject claimed audio that did not exist
+
+Its tracks carried `audioUrl: "/audio/night-drive.mp3"` and similar —
+decoration from when the field was unused. Once Phase 14 started fetching
+`audioUrl` at startup, those produced two failed requests on every load, for
+files that never existed. The values were removed: mock data must not assert
+that files exist.
+
+### Verification
+
+73 unit tests pass (7 new). Browser-driven: add a track from `audio/`, see
+it appear with the file name as its title and its file leave the add picker;
+place it on the canvas and play it; Remove disabled while it is in use and
+working once the node is deleted, with the file offered again afterwards;
+the added track survives a save and reload. No console errors.
+
+---
+
+## 2026-08-17: Phase 16 Implementation Decisions (Deck Panel and Waveform)
+
+### Context
+
+The goal behind this and the next phases is choosing where in a track to mix
+— which needs the track's shape to be visible. Phase 16 is step 1 of four
+(panel and waveform; then seek, transition ranges, automatic BPM). The
+approved plan is `docs/plans/phase16_deck_panel_waveform.md`.
+
+### Decisions
+
+#### 1. A waveform is data reduction, and needs no analysis
+
+Decision:
+
+`extractPeaks` reduces the decoded samples to one value per pixel column —
+the loudest sample in that slice — and the deck draws those.
+
+Reason:
+
+Nothing is estimated, so unlike BPM detection there is no library, no
+accuracy question and nothing to be wrong about. The 2026-07-10 discussion
+had already put peak extraction in this category. It is also the first use
+of `TrackAudioStore.pcmFor()`, built in Phase 11 for exactly this and unused
+since.
+
+#### 2. Peak extraction stays synchronous and pure
+
+Decision:
+
+`extractPeaks` is an ordinary function, not a Promise.
+
+Reason:
+
+The recorded rule that analysis is async from the start (for a future
+Worker/WASM swap) is about the `Analyzer` interface for estimation work.
+This is a fixed calculation, fast enough to run inline; a Promise here would
+be ceremony. When the real Analyzer arrives it follows the recorded rules.
+
+#### 3. Peaks are cached per track and per width
+
+Decision:
+
+`WaveformCache` keys on `trackId:bucketCount`.
+
+Reason:
+
+A four-minute track is about ten million samples. Recomputing per render is
+wasteful; a different panel width genuinely needs a different reduction.
+
+#### 4. Only the playhead animates
+
+Decision:
+
+The canvas is drawn when the track or width changes; the playhead is a
+positioned element updated on `requestAnimationFrame`. The polling from
+Phase 13 was extracted into `usePlaybackProgress`, now shared with the deck.
+
+#### 5. BPM is typed in, not detected
+
+Decision:
+
+The deck edits `Track.bpm`; automatic detection is a later phase filling the
+same field.
+
+Reason:
+
+Detection accuracy varies by material, and a wrong number is worse than no
+number while there is nothing to check it against. Typing it costs nothing
+and throws nothing away: the field, the UI and the storage are the same ones
+detection will use.
+
+### Unresolved: what the NEXT deck shows
+
+The rule shipped (follow the first outgoing edge, i.e. what sequential
+playback would do) was described in the proposal but **implemented without
+being confirmed**. It is recorded as provisional in
+`docs/discussions/2026-08-17_open_issue_next_deck_selection.md`, with its
+limits — no choice when a node branches, no way to load a track into NEXT
+freely — to be settled together with how branching is handled during
+playback.
+
+### Verification
+
+86 unit tests pass (13 new). Browser-driven: two decks with NOW/NEXT
+resolution following the selection; the waveform drawn with heights that
+vary with the track (measured 10 → 44 → 22 → 2 across a real MP3); the
+playhead advancing during playback; a BPM typed on a deck appearing in the
+Track Library. No console errors.
+
+---
+
+## 2026-08-17: Phase 17 Implementation Decisions (Seek by Clicking)
+
+### Context
+
+Step 2 of the four: Phase 16 made a track's shape visible, this makes it
+reachable. The approved plan is `docs/plans/phase17_seek_by_click.md`.
+
+### Decisions
+
+#### 1. Clicking while stopped starts playback there
+
+Decision:
+
+A click is an audition, not a cue-point setting.
+
+Reason:
+
+The reason to click a quiet part of a waveform is to hear what is there.
+Setting a start point without playing would need a stored position per node,
+which belongs with transition ranges (step 3).
+
+#### 2. Seeking during sequential playback reschedules the hand-over
+
+Decision:
+
+`SequencePlayer` remembers its current step and, after a seek, sets the
+next-step timer from what is left of the track rather than from its start.
+
+Reason:
+
+Forbidding it would be less work but would disable the feature exactly when
+a set is running. `scheduleNextStep` gained a `playedSec` argument, so the
+same rule covers both a fresh step and a seek.
+
+#### 3. Click only, no dragging
+
+Decision:
+
+Scrubbing is out of scope.
+
+Reason:
+
+It has to decide what the audio does while the pointer moves, which is a
+different feature rather than a variation of this one.
+
+#### 4. Clicking the other deck plays that track
+
+Decision:
+
+Seeking inside the playing node keeps a sequence running; clicking the other
+deck starts that track instead, ending the sequence.
+
+Reason:
+
+Auditioning the next track is a normal thing to want, and a predictable
+interruption is better than silently ignoring the click.
+
+### Implementation note: the position must be backdated
+
+Web Audio cannot move a playing source, so a seek stops it and starts a new
+one at an offset. The engine records the start as `now - offsetSec`, so the
+reported position reads as the offset immediately; recording `now` would
+make the progress bar and playhead restart from zero while the audio played
+from the middle. The offset is passed only to buffer sources — an oscillator
+has no position to start from.
+
+### Trade-offs accepted
+
+- A seek restarts the source, so a few milliseconds of fade replace a
+  sample-exact jump. Inaudible, and it avoids a click.
+- One pixel of a ~660-pixel deck is about 0.4s of a four-minute track: fine
+  for finding a section, not for placing a cue to the beat. That needs zoom
+  or a beat grid, neither of which exists.
+
+### Verification
+
+91 unit tests pass (5 new). Browser-driven: clicking the middle of a 4:16
+track while stopped starts it at 2:08; clicking at 25% jumps to 1:04 and
+keeps advancing with the playhead at 25.6%; during sequential playback, a
+seek to 10% of a 2s track still hands over to the next track on time; decks
+without audio ignore clicks. No console errors.
+
+---
+
+## 2026-08-17: Ignore Rules Are Anchored to the Repository Root
+
+### Context
+
+Phase 14 added a local server that serves audio from `audio/` and saves the
+project into `data/`. Both hold the developer's own material rather than
+source, so they were git-ignored — written, without much thought, as:
+
+```
+audio/
+data/
+```
+
+A `.gitignore` pattern with no leading slash matches at **every** level, so
+`audio/` also matched `src/audio/`, the audio layer of the application.
+
+Phase 16 added four modules there (`waveform.ts`, `waveformCache.ts` and
+their tests). `git add` skipped them silently — an ignored path is not an
+error — while the components importing them were committed normally. The
+result reached `main` through PR #7: a checkout of `main` could not build,
+failing with `Cannot find module './audio/waveformCache'`.
+
+### Why it went unnoticed
+
+Everything looked correct from inside the working tree, which still had the
+files: `npm run lint`, `tsc -b` and all 91 tests passed both before and
+after committing. Nothing in the normal loop reads what was actually
+recorded in the commit, so nothing contradicted the assumption that it had
+been.
+
+### Decision
+
+Ignore rules for repository-root folders are written anchored:
+
+```
+/audio/
+/data/
+```
+
+so they cannot match a directory of the same name elsewhere in the tree.
+
+### Decision: verify from a clean checkout when a phase adds a directory
+
+When a phase introduces files under a path that any ignore rule could
+plausibly match, verify the branch by cloning it and building from scratch,
+not only by building the working tree. That is how this was confirmed both
+broken and fixed.
+
+### Notes
+
+- The mistake is Phase 14's; the damage appeared two phases later, in code
+  that had nothing to do with it. A rule that is too broad stays quiet until
+  something new happens to fall inside it.
+- `git status --ignored` over `src/` lists exactly this class of problem and
+  costs nothing to run.

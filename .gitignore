@@ -144,5 +144,9 @@ vite.config.ts.timestamp-*
 
 # NodeMix Canvas local data (Phase 14): the user's music and saved project,
 # served by server/index.js. Not source.
-audio/
-data/
+#
+# Anchored with a leading slash so they match only these two folders at the
+# repository root. Written as `audio/`, the pattern also matched `src/audio/`
+# and silently kept new modules there out of commits.
+/audio/
+/data/

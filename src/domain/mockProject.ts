@@ -5,6 +5,11 @@
 // IDs use human-readable strings (e.g. "track-001"); runtime-created
 // entities will use crypto.randomUUID() instead.
 //
+// The tracks carry no audioUrl. They used to hold illustrative paths, which
+// were harmless while audioUrl was unused but became two failed requests per
+// load once Phase 14 started fetching it. Mock data should not claim that
+// files exist; attach real audio from the audio/ folder instead.
+//
 // Source of truth: docs/04_domain_model.md
 
 import type { Project } from "./types";
@@ -19,7 +24,6 @@ export const mockProject: Project = {
       artist: "Sample Artist",
       bpm: 110,
       durationSec: 180,
-      audioUrl: "/audio/night-drive.mp3",
       tags: ["night", "drive", "smooth"],
     },
     {
@@ -28,7 +32,6 @@ export const mockProject: Project = {
       artist: "Sample Artist",
       bpm: 112,
       durationSec: 200,
-      audioUrl: "/audio/blue-memory.mp3",
       tags: ["nostalgia", "blue", "soft"],
     },
   ],

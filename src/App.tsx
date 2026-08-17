@@ -65,10 +65,12 @@ import { useEffect, useRef, useState } from "react";
 // TrackNodeData here to avoid a naming collision with the component.
 import type {
   Project,
+  Track,
   TransitionEdge,
   TransitionType,
   TrackNode as TrackNodeData,
 } from "./domain/types";
+import { trackTitleFromFileName } from "./domain/trackRules";
 import { mockProject } from "./domain/mockProject";
 import {
   changeTransitionType,
@@ -405,6 +407,48 @@ function App() {
     }
   }
 
+  // Add a new track from one of the server's audio files, and load its audio
+  // so it can be played immediately. The file name (without its extension)
+  // becomes the title; artist and BPM are left empty because a file name does
+  // not know them.
+  async function handleAddTrackFromAudio(file: ServerTrackFile) {
+    const newTrack: Track = {
+      id: crypto.randomUUID(),
+      title: trackTitleFromFileName(file.fileName),
+      tags: [],
+      audioUrl: file.url,
+    };
+    setProject((current) => ({
+      ...current,
+      tracks: [...current.tracks, newTrack],
+    }));
+
+    try {
+      const { durationSec } = await getAudioEngine().loadTrackAudioFromUrl(
+        newTrack.id,
+        file.url,
+      );
+      rememberTrackAudio(newTrack.id, file.fileName, durationSec);
+    } catch {
+      // The track is added either way; it simply has no audio loaded.
+      window.alert(`Could not load "${file.fileName}" from the server.`);
+    }
+  }
+
+  // Remove a track from the library. Only reachable when no node uses it (the
+  // button is disabled otherwise), so no node is left pointing at nothing.
+  function handleRemoveTrack(trackId: string) {
+    setProject((current) => ({
+      ...current,
+      tracks: current.tracks.filter((track) => track.id !== trackId),
+    }));
+    setTrackAudioInfo((current) => {
+      const next = new Map(current);
+      next.delete(trackId);
+      return next;
+    });
+  }
+
   // Attach one of the server's audio files to a track. The URL is written into
   // the project, so saving and reloading brings the audio back.
   async function handleChooseServerFile(
@@ -508,6 +552,10 @@ function App() {
     ? (project.nodes.find((node) => node.id === selectedEdge.toNodeId) ?? null)
     : null;
 
+  // Tracks that a node uses, so the library can block removing them. Derived
+  // from the nodes rather than stored, so it cannot fall out of step.
+  const usedTrackIds = new Set(project.nodes.map((node) => node.trackId));
+
   // The node a running sequence is playing (or null), used for the status line.
   const nowPlayingNode =
     project.nodes.find((node) => node.id === nowPlayingNodeId) ?? null;
@@ -556,9 +604,12 @@ function App() {
           tracks={project.tracks}
           audioInfo={trackAudioInfo}
           serverFiles={serverFiles}
+          usedTrackIds={usedTrackIds}
           onAddToCanvas={handleAddToCanvas}
           onImportAudio={handleImportTrackAudio}
           onChooseServerFile={handleChooseServerFile}
+          onAddTrackFromAudio={handleAddTrackFromAudio}
+          onRemoveTrack={handleRemoveTrack}
         />
         <InspectorPanel
           tracks={project.tracks}

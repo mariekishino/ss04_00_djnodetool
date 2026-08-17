@@ -36,6 +36,17 @@
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 //
+// Phase 17: "Seek by clicking". A click on a deck's waveform moves playback
+// to that point. Web Audio cannot move a playing source, so the engine starts
+// a new one at an offset; a running sequence reschedules its hand-over from
+// what is left of the track.
+//
+// Phase 16: "Deck panel and waveform". A strip along the bottom shows the
+// track playing now and the one playback would move to next, each with its
+// waveform (peaks cached per track and width) and an editable BPM. App
+// resolves which nodes the two decks show; the moving playhead is polled by
+// the deck itself, like the node's progress bar.
+//
 // Phase 14: "Local server persistence". At startup App asks the local server
 // for the saved project and the files in its audio folder; if the server is
 // not running it falls back to mockProject and the session-only file picker,
@@ -71,6 +82,7 @@ import type {
   TrackNode as TrackNodeData,
 } from "./domain/types";
 import { trackTitleFromFileName } from "./domain/trackRules";
+import { findNextEdge } from "./domain/playbackSequence";
 import { mockProject } from "./domain/mockProject";
 import {
   changeTransitionType,
@@ -88,11 +100,14 @@ import {
 import { AudioEngine } from "./audio/audioEngine";
 import { TrackAudioStore } from "./audio/trackAudioStore";
 import { SequencePlayer } from "./audio/sequencePlayer";
+import { WaveformCache } from "./audio/waveformCache";
+import { offsetFromRatio } from "./audio/playbackProgress";
 import TrackLibrary, { type TrackAudioInfo } from "./components/TrackLibrary";
 import ProjectToolbar from "./components/ProjectToolbar";
 import NodeCanvas from "./components/NodeCanvas";
 import InspectorPanel from "./components/InspectorPanel";
 import PlayerControls from "./components/PlayerControls";
+import DeckPanel from "./components/DeckPanel";
 
 // Default color for runtime-created nodes (tracks have no color of their own).
 const DEFAULT_NODE_COLOR = "#64748B";
@@ -184,6 +199,16 @@ function App() {
   // progress display. A getter, so App does not re-render for each frame.
   function getPlaybackProgress() {
     return audioEngineRef.current?.playbackProgress() ?? null;
+  }
+
+  // Waveform peaks per track, computed on first request and cached. Created
+  // lazily like the engine, over the same decoded audio.
+  const waveformCacheRef = useRef<WaveformCache | null>(null);
+  function getTrackPeaks(trackId: string, bucketCount: number) {
+    if (!waveformCacheRef.current) {
+      waveformCacheRef.current = new WaveformCache(getTrackAudioStore());
+    }
+    return waveformCacheRef.current.peaksFor(trackId, bucketCount);
   }
 
   // Ask the local server, once, for its audio files and saved project. When it
@@ -556,6 +581,38 @@ function App() {
   // from the nodes rather than stored, so it cannot fall out of step.
   const usedTrackIds = new Set(project.nodes.map((node) => node.trackId));
 
+  // What the deck panel shows: the node playing now, or the selected one when
+  // nothing plays, and the node playback would move to from there. The NEXT
+  // deck follows the same first-outgoing-edge rule as sequential playback, so
+  // it shows what would actually come next.
+  const deckNowNode =
+    project.nodes.find((node) => node.id === nowPlayingNodeId) ??
+    project.nodes.find((node) => node.id === selectedNodeId) ??
+    null;
+  const deckNextEdge = deckNowNode
+    ? findNextEdge(project.edges, deckNowNode.id)
+    : null;
+  const deckNextNode = deckNextEdge
+    ? (project.nodes.find((node) => node.id === deckNextEdge.toNodeId) ?? null)
+    : null;
+
+  // The track a node plays, for the decks.
+  function trackForNode(node: TrackNodeData | null) {
+    if (!node) return null;
+    return project.tracks.find((track) => track.id === node.trackId) ?? null;
+  }
+
+  // Set or clear a track's BPM, typed in on a deck. Automatic detection is a
+  // later phase and will fill this same field.
+  function handleChangeTrackBpm(trackId: string, bpm: number | undefined) {
+    setProject((current) => ({
+      ...current,
+      tracks: current.tracks.map((track) =>
+        track.id === trackId ? { ...track, bpm } : track,
+      ),
+    }));
+  }
+
   // The node a running sequence is playing (or null), used for the status line.
   const nowPlayingNode =
     project.nodes.find((node) => node.id === nowPlayingNodeId) ?? null;
@@ -590,7 +647,29 @@ function App() {
     getSequencePlayer().stop();
   }
 
+  // Jump to a point in a deck's track, given where along the waveform the
+  // click landed (0..1).
+  //
+  // Seeking inside the node a sequence is playing keeps the sequence running,
+  // with its hand-over rescheduled from the new position. Clicking any other
+  // deck plays that track from that point instead, which ends the sequence.
+  function handleSeek(node: TrackNodeData, ratio: number) {
+    const engine = getAudioEngine();
+    const offsetSec = offsetFromRatio(ratio, engine.durationForNode(node));
+    const sequence = getSequencePlayer();
+
+    if (sequence.isRunning() && sequence.currentNodeId() === node.id) {
+      sequence.seek(offsetSec);
+      return;
+    }
+
+    sequence.stop();
+    engine.playNode(node, offsetSec);
+    setNowPlayingNodeId(node.id);
+  }
+
   return (
+    <div className="app-shell">
     <div className="app-layout">
       <div className="left-column">
         <ProjectToolbar
@@ -651,6 +730,17 @@ function App() {
         onEdgeClick={handleEdgeClick}
         onBackgroundClick={handleBackgroundClick}
         onMoveNode={handleMoveNode}
+      />
+    </div>
+      <DeckPanel
+        nowNode={deckNowNode}
+        nowTrack={trackForNode(deckNowNode)}
+        nextNode={deckNextNode}
+        nextTrack={trackForNode(deckNextNode)}
+        getPeaks={getTrackPeaks}
+        getProgress={getPlaybackProgress}
+        onChangeBpm={handleChangeTrackBpm}
+        onSeek={handleSeek}
       />
     </div>
   );

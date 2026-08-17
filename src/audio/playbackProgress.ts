@@ -26,3 +26,18 @@ export function progressRatio(elapsedSec: number, durationSec: number): number {
   if (elapsedSec >= durationSec) return 1;
   return elapsedSec / durationSec;
 }
+
+/**
+ * Where in a track a 0..1 position lands, in seconds — the inverse of
+ * progressRatio, used when a click on the waveform is turned into a seek.
+ *
+ * The result always stays inside the track: a ratio outside 0..1 (a click
+ * caught slightly beyond the element) clamps to its ends, and a track with
+ * no usable duration seeks to the start.
+ */
+export function offsetFromRatio(ratio: number, durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
+  if (!Number.isFinite(ratio) || ratio <= 0) return 0;
+  if (ratio >= 1) return durationSec;
+  return ratio * durationSec;
+}

@@ -81,30 +81,57 @@ export class AudioEngine {
   // Lazily create (or resume) the AudioContext. Called from the play methods so
   // the context is only created in response to a user action.
   private ensureContext(): AudioContext {
+    const context = this.getContext();
+    // If a previous interaction left it suspended, resume it.
+    if (context.state === "suspended") {
+      void context.resume();
+    }
+    return context;
+  }
+
+  // The AudioContext without resuming it. Creating one outside a user gesture
+  // is allowed (it just starts suspended); resuming one is not. Decoding works
+  // on a suspended context, so loading audio at startup goes through here.
+  private getContext(): AudioContext {
     if (!this.context) {
       this.context = new AudioContext();
-    }
-    // If a previous interaction left it suspended, resume it.
-    if (this.context.state === "suspended") {
-      void this.context.resume();
     }
     return this.context;
   }
 
-  // Decode a picked audio file (MP3/WAV/...) and keep the result in the
-  // TrackAudioStore. Decoding happens once here, at import time; playback
-  // never decodes. Called from the file-pick handler, a user gesture, so
-  // creating the AudioContext here is allowed.
+  // Decode audio bytes into the TrackAudioStore. Decoding happens once, at
+  // load time; playback never decodes. Shared by the two sources of bytes:
+  // a picked file and a URL served by the local server.
+  private async decodeInto(
+    trackId: string,
+    encoded: ArrayBuffer,
+  ): Promise<{ durationSec: number }> {
+    // decodeAudioData rejects on undecodable input; the caller reports it.
+    const buffer = await this.getContext().decodeAudioData(encoded);
+    this.trackAudio.set(trackId, buffer);
+    return { durationSec: buffer.duration };
+  }
+
+  // Load a track's audio from a picked file (MP3/WAV/...).
   async importTrackAudio(
     trackId: string,
     file: File,
   ): Promise<{ durationSec: number }> {
-    const context = this.ensureContext();
-    const encoded = await file.arrayBuffer();
-    // decodeAudioData rejects on undecodable input; the caller reports it.
-    const buffer = await context.decodeAudioData(encoded);
-    this.trackAudio.set(trackId, buffer);
-    return { durationSec: buffer.duration };
+    return this.decodeInto(trackId, await file.arrayBuffer());
+  }
+
+  // Load a track's audio from a URL, i.e. a file served by the local server.
+  // Phase 14: this is what makes audio survive a reload — the project stores
+  // the URL, and the audio is fetched again on startup.
+  async loadTrackAudioFromUrl(
+    trackId: string,
+    url: string,
+  ): Promise<{ durationSec: number }> {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Could not fetch audio (${response.status}).`);
+    }
+    return this.decodeInto(trackId, await response.arrayBuffer());
   }
 
   // Create the audio source for a node. This is the single swap point: when

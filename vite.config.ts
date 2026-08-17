@@ -7,6 +7,13 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
+    // Phase 14: the local server (server/index.js) holds the audio folder and
+    // the saved project. Proxying keeps the browser on one origin, so no CORS
+    // handling is needed on either side.
+    proxy: {
+      '/api': 'http://localhost:5200',
+      '/audio': 'http://localhost:5200',
+    },
   },
 })
 

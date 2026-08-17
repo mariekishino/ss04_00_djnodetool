@@ -141,3 +141,8 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# NodeMix Canvas local data (Phase 14): the user's music and saved project,
+# served by server/index.js. Not source.
+audio/
+data/

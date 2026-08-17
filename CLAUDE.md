@@ -60,12 +60,25 @@ Use:
 
 - React
 - TypeScript
-- frontend-only architecture for MVP
 - local mock data
 - local JSON save/load
 - Web Audio API for simple playback
 
-Do not add a backend unless explicitly requested.
+The MVP was frontend-only. Since Phase 14 (2026-07-26) there is also a small
+local server in `server/`, added at the developer's explicit request to make
+audio files and the project survive a reload.
+
+Its scope is fixed and must not grow without a new explicit request:
+
+- serve audio files from the git-ignored `audio/` folder
+- read and write one project JSON in the git-ignored `data/` folder
+
+No authentication, no database, no upload endpoint, no cloud sync. It is
+plain JavaScript on Node's built-in modules: no dependencies, no build step.
+Run it with `npm run server` alongside `npm run dev`; Vite proxies `/api` and
+`/audio` to it. The app must keep working when the server is not running.
+
+Do not add any other backend unless explicitly requested.
 
 ## Suggested Directory Structure
 
@@ -91,6 +104,9 @@ src/
 
   App.tsx
   main.tsx
+
+server/
+  index.js          # the local server (Phase 14)
 ```
 
 This structure can be adjusted, but do not mix all logic into one large file.

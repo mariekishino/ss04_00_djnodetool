@@ -159,7 +159,11 @@ export class AudioEngine {
   // Build one voice for a node, wire it as source -> gain -> destination, start
   // it at startAtSec, and track it. The caller schedules the gain envelope. The
   // gain starts at 0 so the caller can ramp it up without a click.
-  private startVoice(node: TrackNode, startAtSec: number): Voice {
+  private startVoice(
+    node: TrackNode,
+    startAtSec: number,
+    offsetSec = 0,
+  ): Voice {
     const context = this.context!;
     const source = this.createSourceForNode(context, node);
     const gain = context.createGain();
@@ -167,7 +171,12 @@ export class AudioEngine {
     gain.connect(context.destination);
     gain.gain.setValueAtTime(0, startAtSec);
 
-    source.start(startAtSec);
+    // Only a buffer has a position to start from; an oscillator just plays.
+    if (offsetSec > 0 && source instanceof AudioBufferSourceNode) {
+      source.start(startAtSec, offsetSec);
+    } else {
+      source.start(startAtSec);
+    }
     const voice: Voice = { source, gain };
     this.activeVoices.push(voice);
 
@@ -190,15 +199,20 @@ export class AudioEngine {
 
   // Play a single node's sound. Stops any current playback first, so only one
   // transition/voice set is active at a time. The voice plays until stop().
-  playNode(node: TrackNode): void {
+  // Phase 17: offsetSec starts the track partway in, which is how seeking
+  // works — Web Audio cannot move a playing source, so a seek stops it and
+  // starts a new one here.
+  playNode(node: TrackNode, offsetSec = 0): void {
     const context = this.ensureContext();
     this.stop();
 
     const now = context.currentTime;
-    const voice = this.startVoice(node, now);
+    const voice = this.startVoice(node, now, offsetSec);
     // Attack ramp from 0 to PLAY_GAIN to avoid a click.
     voice.gain.gain.linearRampToValueAtTime(PLAY_GAIN, now + ATTACK_SECONDS);
-    this.setCurrentPlayback(node, now);
+    // Backdate the start so the reported position reads as the offset right
+    // away, instead of restarting the progress display from zero.
+    this.setCurrentPlayback(node, now - offsetSec);
   }
 
   // Play a transition between two nodes as a preview. Stops any current

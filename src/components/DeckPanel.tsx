@@ -6,8 +6,11 @@
 // place to mix without listening through the whole track first.
 //
 // The waveform is drawn on a canvas once per track and width; only the
-// playhead moves per frame, via usePlaybackProgress. Clicking to seek and
-// choosing transition ranges are later steps and are not here yet.
+// playhead moves per frame, via usePlaybackProgress.
+//
+// Phase 17: clicking the waveform reports where it landed as a 0..1 ratio.
+// The deck stays presentational — it does not know what a seek is; App turns
+// the ratio into a position and decides what to do with it.
 
 import { useEffect, useRef, useState } from "react";
 import type { Track, TrackNode } from "../domain/types";
@@ -28,6 +31,7 @@ type DeckProps = {
   getPeaks: (trackId: string, bucketCount: number) => Float32Array | null;
   getProgress: () => PlaybackProgress | null;
   onChangeBpm: (trackId: string, bpm: number | undefined) => void;
+  onSeek: (node: TrackNode, ratio: number) => void;
 };
 
 // Draw the peaks as vertical bars around a centre line. Nothing about this is
@@ -67,6 +71,7 @@ function Deck({
   getPeaks,
   getProgress,
   onChangeBpm,
+  onSeek,
 }: DeckProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // The canvas width in layout pixels, measured after layout so the number of
@@ -100,6 +105,9 @@ function Deck({
     const color = getComputedStyle(canvas).color;
     drawWaveform(canvas, peaks, color);
   }, [peaks]);
+
+  // Only a track with a waveform has somewhere to seek to.
+  const canSeek = peaks !== null && node !== null;
 
   const durationSec = progress?.durationSec;
   const playedRatio = progress
@@ -143,7 +151,18 @@ function Deck({
         )}
       </div>
 
-      <div className="deck-waveform" style={{ height: WAVEFORM_HEIGHT }}>
+      <div
+        className={
+          canSeek ? "deck-waveform seekable" : "deck-waveform"
+        }
+        style={{ height: WAVEFORM_HEIGHT }}
+        onClick={(event) => {
+          if (!canSeek || !node) return;
+          // Where the click landed along the waveform, as 0..1.
+          const bounds = event.currentTarget.getBoundingClientRect();
+          onSeek(node, (event.clientX - bounds.left) / bounds.width);
+        }}
+      >
         <canvas
           ref={canvasRef}
           className="deck-waveform-canvas"
@@ -173,6 +192,7 @@ type DeckPanelProps = {
   getPeaks: (trackId: string, bucketCount: number) => Float32Array | null;
   getProgress: () => PlaybackProgress | null;
   onChangeBpm: (trackId: string, bpm: number | undefined) => void;
+  onSeek: (node: TrackNode, ratio: number) => void;
 };
 
 function DeckPanel({
@@ -183,6 +203,7 @@ function DeckPanel({
   getPeaks,
   getProgress,
   onChangeBpm,
+  onSeek,
 }: DeckPanelProps) {
   return (
     <div className="deck-panel">
@@ -193,6 +214,7 @@ function DeckPanel({
         getPeaks={getPeaks}
         getProgress={getProgress}
         onChangeBpm={onChangeBpm}
+        onSeek={onSeek}
       />
       <Deck
         label="NEXT"
@@ -201,6 +223,7 @@ function DeckPanel({
         getPeaks={getPeaks}
         getProgress={getProgress}
         onChangeBpm={onChangeBpm}
+        onSeek={onSeek}
       />
     </div>
   );

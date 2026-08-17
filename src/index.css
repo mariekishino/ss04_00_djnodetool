@@ -744,3 +744,8 @@ code {
   box-shadow: 0 0 6px var(--text-h);
   pointer-events: none;
 }
+
+/* A waveform that can be clicked to move playback. */
+.deck-waveform.seekable {
+  cursor: pointer;
+}

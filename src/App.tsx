@@ -36,6 +36,11 @@
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 //
+// Phase 17: "Seek by clicking". A click on a deck's waveform moves playback
+// to that point. Web Audio cannot move a playing source, so the engine starts
+// a new one at an offset; a running sequence reschedules its hand-over from
+// what is left of the track.
+//
 // Phase 16: "Deck panel and waveform". A strip along the bottom shows the
 // track playing now and the one playback would move to next, each with its
 // waveform (peaks cached per track and width) and an editable BPM. App
@@ -96,6 +101,7 @@ import { AudioEngine } from "./audio/audioEngine";
 import { TrackAudioStore } from "./audio/trackAudioStore";
 import { SequencePlayer } from "./audio/sequencePlayer";
 import { WaveformCache } from "./audio/waveformCache";
+import { offsetFromRatio } from "./audio/playbackProgress";
 import TrackLibrary, { type TrackAudioInfo } from "./components/TrackLibrary";
 import ProjectToolbar from "./components/ProjectToolbar";
 import NodeCanvas from "./components/NodeCanvas";
@@ -641,6 +647,27 @@ function App() {
     getSequencePlayer().stop();
   }
 
+  // Jump to a point in a deck's track, given where along the waveform the
+  // click landed (0..1).
+  //
+  // Seeking inside the node a sequence is playing keeps the sequence running,
+  // with its hand-over rescheduled from the new position. Clicking any other
+  // deck plays that track from that point instead, which ends the sequence.
+  function handleSeek(node: TrackNodeData, ratio: number) {
+    const engine = getAudioEngine();
+    const offsetSec = offsetFromRatio(ratio, engine.durationForNode(node));
+    const sequence = getSequencePlayer();
+
+    if (sequence.isRunning() && sequence.currentNodeId() === node.id) {
+      sequence.seek(offsetSec);
+      return;
+    }
+
+    sequence.stop();
+    engine.playNode(node, offsetSec);
+    setNowPlayingNodeId(node.id);
+  }
+
   return (
     <div className="app-shell">
     <div className="app-layout">
@@ -713,6 +740,7 @@ function App() {
         getPeaks={getTrackPeaks}
         getProgress={getPlaybackProgress}
         onChangeBpm={handleChangeTrackBpm}
+        onSeek={handleSeek}
       />
     </div>
   );

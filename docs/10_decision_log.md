@@ -2264,7 +2264,7 @@ replacements, and a new node could land exactly on top of an existing one,
 making the canvas read as the wrong graph. The approved plan is
 `docs/plans/phase18_library_single_entry.md`; the companion record for the
 reviewer's data-layer feedback is
-`docs/discussions/2026-08-24_arimoto_feedback_data_layer.md`.
+`docs/discussions/2026-08-24_feedback_data_layer.md`.
 
 ### Decisions
 

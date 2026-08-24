@@ -4,7 +4,7 @@
 - Status: proposed (direction agreed in the 2026-08-24 discussion; details await review)
 - Inputs: `docs/discussions/2026-08-17_open_issue_track_audio_identity.md`,
   `docs/discussions/2026-08-17_feedback_after_using.md`,
-  `docs/discussions/2026-08-24_arimoto_feedback_data_layer.md`
+  `docs/discussions/2026-08-24_feedback_data_layer.md`
 
 ## Goal
 
@@ -98,7 +98,7 @@ classification question itself stays open and undecided.
 
 - Everything in Phase 19 (server as source of truth, autosave, API
   cleanup) — recorded in
-  `docs/discussions/2026-08-24_arimoto_feedback_data_layer.md`.
+  `docs/discussions/2026-08-24_feedback_data_layer.md`.
 - Renaming a track, editing artist/BPM, reading ID3 tags.
 - Library classification (song vs. effect material) — still an open issue.
 - Play / "Play from here" button wording (feedback item 3) — separate,

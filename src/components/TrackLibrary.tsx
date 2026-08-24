@@ -4,19 +4,18 @@
 // the parent (App) to create a new node from that track via onAddToCanvas.
 // The library itself stays presentational; it does not own project state.
 //
-// Phase 11: each entry has a "Load audio" button that opens a file picker
-// and passes the picked file up via onImportAudio. When audio is loaded,
-// the entry shows the file name and duration from audioInfo. The library
-// never touches audio APIs; App and the AudioEngine do the decoding.
-//
-// Phase 14: when the local server is running, the entry instead offers the
-// files in its audio folder, which is what makes a track's audio survive a
-// reload. The file picker remains as the fallback when there is no server.
-//
 // Phase 15: the library can grow and shrink. A file in the audio folder can
 // be added as a new track, and a track that no node uses can be removed.
+//
+// Phase 18: adding a track from a file in the server's audio folder is the
+// only way audio enters the project. The per-track replace controls from
+// Phases 11 and 14 (a local-file picker, then a server-file picker) are gone:
+// they changed what a track played while its title, artist and BPM kept
+// describing the old song. One track = one audio file, fixed at creation;
+// to change the audio, remove the track and add it again. When audio is
+// loaded, the entry shows the file name and duration from audioInfo. The
+// library never touches audio APIs; App and the AudioEngine do the decoding.
 
-import { useRef } from "react";
 import type { Track } from "../domain/types";
 import type { ServerTrackFile } from "../storage/serverStorage";
 import { formatTime } from "./formatTime";
@@ -34,99 +33,25 @@ type TrackLibraryProps = {
   tracks: Track[];
   audioInfo: Map<string, TrackAudioInfo>;
   // The files in the server's audio folder. Null when the server is not
-  // running, in which case the session-only file picker is offered instead.
+  // running, in which case no tracks can be added (offline is read-only
+  // for audio; Phase 18).
   serverFiles: ServerTrackFile[] | null;
   // Track ids that a node on the canvas uses; these cannot be removed.
   usedTrackIds: Set<string>;
   onAddToCanvas: (trackId: string) => void;
-  onImportAudio: (trackId: string, file: File) => void;
-  onChooseServerFile: (trackId: string, file: ServerTrackFile) => void;
   onAddTrackFromAudio: (file: ServerTrackFile) => void;
   onRemoveTrack: (trackId: string) => void;
 };
 
-// One track's "Load audio" control: a visible button driving a hidden file
-// input (same pattern as ProjectToolbar's Import JSON). A separate component
-// so each track owns its own input ref.
-function TrackAudioImport({
-  trackId,
-  onImportAudio,
-}: {
-  trackId: string;
-  onImportAudio: (trackId: string, file: File) => void;
-}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) {
-      onImportAudio(trackId, file);
-    }
-    // Reset so selecting the same file again still fires a change event.
-    event.target.value = "";
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        className="load-audio-button"
-        onClick={() => fileInputRef.current?.click()}
-      >
-        Load audio
-      </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="audio/*"
-        className="toolbar-file-input"
-        onChange={handleFileChange}
-      />
-    </>
-  );
-}
-
-// One track's server-file picker: choose a file from the audio folder. The
-// selected value is the track's current audioUrl, so the picker shows what is
-// attached after a reload.
-function ServerFilePicker({
-  trackId,
-  audioUrl,
-  serverFiles,
-  onChooseServerFile,
-}: {
-  trackId: string;
-  audioUrl: string | undefined;
-  serverFiles: ServerTrackFile[];
-  onChooseServerFile: (trackId: string, file: ServerTrackFile) => void;
-}) {
-  if (serverFiles.length === 0) {
-    return <span className="track-audio-hint">No files in audio/</span>;
-  }
-
-  return (
-    <select
-      className="server-file-select"
-      value={audioUrl ?? ""}
-      onChange={(event) => {
-        const chosen = serverFiles.find((f) => f.url === event.target.value);
-        if (chosen) onChooseServerFile(trackId, chosen);
-      }}
-    >
-      <option value="">Choose audio…</option>
-      {serverFiles.map((file) => (
-        <option key={file.url} value={file.url}>
-          {file.fileName}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-// The control that adds a track, listing the audio files not already attached
-// to one. A file becomes a track by being chosen here; see
-// docs/plans/phase15_track_library_editing.md for why this is explicit rather
-// than the folder being mirrored into the library.
+// The control that adds a track from an audio file. A file becomes a track by
+// being chosen here; see docs/plans/phase15_track_library_editing.md for why
+// this is explicit rather than the folder being mirrored into the library.
+//
+// Phase 18: every file is always listed. Files already attached to a track
+// are disabled with an "added" mark instead of being hidden — hiding them
+// made the list reshape itself as a side effect of other operations, which
+// read as random. Duplicates stay impossible (Phase 15, decision 5): a song
+// appears twice in a set as two nodes of one track, not as two tracks.
 function AddTrackPicker({
   tracks,
   serverFiles,
@@ -139,14 +64,11 @@ function AddTrackPicker({
   const usedUrls = new Set(
     tracks.map((track) => track.audioUrl).filter(Boolean),
   );
-  const available = serverFiles.filter((file) => !usedUrls.has(file.url));
 
-  if (available.length === 0) {
+  if (serverFiles.length === 0) {
     return (
       <p className="library-hint">
-        {serverFiles.length === 0
-          ? "Put audio files in the audio/ folder to add tracks."
-          : "Every file in audio/ is already a track."}
+        Put audio files in the audio/ folder to add tracks.
       </p>
     );
   }
@@ -157,16 +79,19 @@ function AddTrackPicker({
       // Always shows the prompt: choosing is an action, not a setting.
       value=""
       onChange={(event) => {
-        const chosen = available.find((f) => f.url === event.target.value);
+        const chosen = serverFiles.find((f) => f.url === event.target.value);
         if (chosen) onAddTrackFromAudio(chosen);
       }}
     >
       <option value="">Add track from audio…</option>
-      {available.map((file) => (
-        <option key={file.url} value={file.url}>
-          {file.fileName}
-        </option>
-      ))}
+      {serverFiles.map((file) => {
+        const added = usedUrls.has(file.url);
+        return (
+          <option key={file.url} value={file.url} disabled={added}>
+            {added ? `${file.fileName} (added)` : file.fileName}
+          </option>
+        );
+      })}
     </select>
   );
 }
@@ -177,8 +102,6 @@ function TrackLibrary({
   serverFiles,
   usedTrackIds,
   onAddToCanvas,
-  onImportAudio,
-  onChooseServerFile,
   onAddTrackFromAudio,
   onRemoveTrack,
 }: TrackLibraryProps) {
@@ -209,8 +132,6 @@ function TrackLibrary({
                   ♪ {loaded.fileName} ({formatTime(loaded.durationSec)})
                 </span>
               )}
-              {/* Buttons first, then the audio control on its own row: the
-                  sidebar is too narrow for all three side by side. */}
               <div className="track-item-actions">
                 <button
                   type="button"
@@ -232,19 +153,6 @@ function TrackLibrary({
                 >
                   Remove
                 </button>
-                {serverFiles ? (
-                  <ServerFilePicker
-                    trackId={track.id}
-                    audioUrl={track.audioUrl}
-                    serverFiles={serverFiles}
-                    onChooseServerFile={onChooseServerFile}
-                  />
-                ) : (
-                  <TrackAudioImport
-                    trackId={track.id}
-                    onImportAudio={onImportAudio}
-                  />
-                )}
               </div>
             </li>
           );

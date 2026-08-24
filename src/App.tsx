@@ -424,6 +424,7 @@ function App() {
         trackId,
         file,
       );
+      waveformCacheRef.current?.forget(trackId);
       rememberTrackAudio(trackId, file.name, durationSec);
     } catch {
       window.alert(
@@ -492,6 +493,7 @@ function App() {
         trackId,
         file.url,
       );
+      waveformCacheRef.current?.forget(trackId);
       rememberTrackAudio(trackId, file.fileName, durationSec);
     } catch {
       window.alert(`Could not load "${file.fileName}" from the server.`);

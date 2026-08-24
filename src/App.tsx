@@ -82,6 +82,7 @@ import type {
   TrackNode as TrackNodeData,
 } from "./domain/types";
 import { trackTitleFromFileName } from "./domain/trackRules";
+import { freeNodePosition } from "./domain/nodeLayout";
 import { findNextEdge } from "./domain/playbackSequence";
 import { mockProject } from "./domain/mockProject";
 import {
@@ -108,6 +109,7 @@ import NodeCanvas from "./components/NodeCanvas";
 import InspectorPanel from "./components/InspectorPanel";
 import PlayerControls from "./components/PlayerControls";
 import DeckPanel from "./components/DeckPanel";
+import { NODE_WIDTH, NODE_HEIGHT } from "./components/canvasLayout";
 
 // Default color for runtime-created nodes (tracks have no color of their own).
 const DEFAULT_NODE_COLOR = "#64748B";
@@ -299,14 +301,12 @@ function App() {
     const track = project.tracks.find((t) => t.id === trackId);
     if (!track) return;
 
-    // Simple fixed offset so repeated additions do not fully overlap.
-    // A proper auto-layout is intentionally out of scope for this phase.
-    const offset = project.nodes.length * 30;
+    const position = freeNodePosition(project.nodes, NODE_WIDTH, NODE_HEIGHT);
     const newNode: TrackNodeData = {
       id: crypto.randomUUID(),
       trackId: track.id,
-      x: 200 + offset,
-      y: 200 + offset,
+      x: position.x,
+      y: position.y,
       label: track.title,
       color: DEFAULT_NODE_COLOR,
     };
@@ -418,21 +418,6 @@ function App() {
   //
   // This is the offline path (no server): the audio lasts for the session
   // only, because a picked file has no URL the project could remember.
-  async function handleImportTrackAudio(trackId: string, file: File) {
-    try {
-      const { durationSec } = await getAudioEngine().importTrackAudio(
-        trackId,
-        file,
-      );
-      waveformCacheRef.current?.forget(trackId);
-      rememberTrackAudio(trackId, file.name, durationSec);
-    } catch {
-      window.alert(
-        `Could not load "${file.name}". It may not be a supported audio file.`,
-      );
-    }
-  }
-
   // Add a new track from one of the server's audio files, and load its audio
   // so it can be played immediately. The file name (without its extension)
   // becomes the title; artist and BPM are left empty because a file name does
@@ -473,31 +458,6 @@ function App() {
       next.delete(trackId);
       return next;
     });
-  }
-
-  // Attach one of the server's audio files to a track. The URL is written into
-  // the project, so saving and reloading brings the audio back.
-  async function handleChooseServerFile(
-    trackId: string,
-    file: ServerTrackFile,
-  ) {
-    setProject((current) => ({
-      ...current,
-      tracks: current.tracks.map((track) =>
-        track.id === trackId ? { ...track, audioUrl: file.url } : track,
-      ),
-    }));
-
-    try {
-      const { durationSec } = await getAudioEngine().loadTrackAudioFromUrl(
-        trackId,
-        file.url,
-      );
-      waveformCacheRef.current?.forget(trackId);
-      rememberTrackAudio(trackId, file.fileName, durationSec);
-    } catch {
-      window.alert(`Could not load "${file.fileName}" from the server.`);
-    }
   }
 
   // Save the project on the local server. The status line reports the result
@@ -687,8 +647,6 @@ function App() {
           serverFiles={serverFiles}
           usedTrackIds={usedTrackIds}
           onAddToCanvas={handleAddToCanvas}
-          onImportAudio={handleImportTrackAudio}
-          onChooseServerFile={handleChooseServerFile}
           onAddTrackFromAudio={handleAddTrackFromAudio}
           onRemoveTrack={handleRemoveTrack}
         />

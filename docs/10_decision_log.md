@@ -2250,3 +2250,102 @@ broken and fixed.
   something new happens to fall inside it.
 - `git status --ignored` over `src/` lists exactly this class of problem and
   costs nothing to run.
+
+---
+
+## 2026-08-24: Phase 18 Implementation Decisions (One Way In)
+
+### Context
+
+A hands-on session (2026-08-24) confirmed the entrance confusion recorded in
+`docs/discussions/2026-08-17_open_issue_track_audio_identity.md` and found
+two more papercuts: the add picker's contents churned as a side effect of
+replacements, and a new node could land exactly on top of an existing one,
+making the canvas read as the wrong graph. The approved plan is
+`docs/plans/phase18_library_single_entry.md`; the companion record for the
+reviewer's data-layer feedback is
+`docs/discussions/2026-08-24_arimoto_feedback_data_layer.md`.
+
+### Decisions
+
+#### 1. One track = one audio file, fixed at creation
+
+Decision:
+
+Both per-card replace controls (the server-file picker and the offline
+local-file import) are removed. To change a track's audio, remove the track
+and add it again. This adopts option A of the open-issue record.
+
+Reason:
+
+Replacement was the only path that could make a track's title, artist and
+BPM describe a different song than the one playing. Nothing worth keeping
+was lost: an added track's title comes from its file and the rest is empty.
+
+#### 2. The add picker shows every file; attached ones are disabled
+
+Decision:
+
+Files already attached to a track appear disabled with an "(added)" mark
+instead of being hidden. This supersedes the "not offered again" wording of
+Phase 15 decision 5; the no-duplicates rule itself stands.
+
+Reason:
+
+Hiding used files made the list reshape itself when something else changed,
+which the developer experienced as random. A disabled row states the rule.
+
+#### 3. New nodes take the first free cascade spot
+
+Decision:
+
+`freeNodePosition` (new, `src/domain/nodeLayout.ts`) walks the old diagonal
+cascade and returns the first spot whose box overlaps no existing node. The
+node size is passed in from `components/canvasLayout.ts`.
+
+Reason:
+
+The fixed 30px offset ignored where nodes actually were; a saved node had
+completely buried another. Passing the size in keeps the domain free of
+rendering constants. This is still not auto-layout.
+
+#### 4. Offline mode is read-only for audio
+
+Decision:
+
+With the server down, no audio can be attached at all.
+
+Reason:
+
+The offline import was a replace-style entrance — the bug class this phase
+removes. The server has been the normal way to run since Phase 14.
+
+#### 5. The stub samples left the saved project by hand, not by code
+
+Decision:
+
+The 2-second stubs (`night-drive.wav`, `blue memory.wav`) and their
+tracks, nodes and demo edge were removed from `data/project.json` and
+`audio/` with the developer watching, on 2026-08-24. `mockProject.ts`
+stays as first-run/offline content.
+
+Reason:
+
+`data/project.json` is the developer's data; code must not rewrite it
+silently. The stubs carried invented metadata and caused most of the
+session's confusion.
+
+### Note on the open issue's ordering
+
+The open-issue record said to settle library classification (song vs.
+effect material) before picking option A/B/C. We deviated deliberately:
+removing a contradiction-producing entrance is orthogonal to whatever
+classification is added later. Classification stays open and undecided.
+
+### Verification
+
+`tsc`, eslint and 96 tests (5 new for `freeNodePosition`) pass. Browser
+check: all files listed with attached ones disabled, no per-card controls,
+an added file flips to "(added)" in place, eight nodes added in a row with
+zero overlaps, no console errors. The developer confirmed the flow
+(pick file → track → Add to Canvas) hands-on on 2026-08-24.

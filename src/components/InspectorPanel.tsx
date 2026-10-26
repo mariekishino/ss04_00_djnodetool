@@ -21,6 +21,11 @@
 // App using domain/edgeRules. The fade input is disabled for "cut" because a
 // cut is instant and its fade is always 0. Editing `note` is still out of
 // scope.
+//
+// Phase 20: two more number inputs on the edge view, "Exit at" (where the
+// transition leaves the from-track) and "Enter at" (where it comes into the
+// to-track). An empty field means the default, and clearing a field is how
+// the user goes back to it; the rules live in domain/edgeRules.
 
 import type {
   Track,
@@ -47,6 +52,8 @@ type InspectorPanelProps = {
     transitionType: TransitionType,
   ) => void;
   onChangeEdgeFadeDuration: (edgeId: string, seconds: number) => void;
+  onChangeEdgeExitPosition: (edgeId: string, seconds: number) => void;
+  onChangeEdgeEnterPosition: (edgeId: string, seconds: number) => void;
 };
 
 function InspectorPanel({
@@ -61,6 +68,8 @@ function InspectorPanel({
   onStartConnection,
   onChangeEdgeTransitionType,
   onChangeEdgeFadeDuration,
+  onChangeEdgeExitPosition,
+  onChangeEdgeEnterPosition,
 }: InspectorPanelProps) {
   // Edge selection takes priority when present (selection is exclusive, so at
   // most one of node/edge is set at a time).
@@ -125,7 +134,52 @@ function InspectorPanel({
             />
             <span className="inspector-unit">s</span>
           </dd>
+
+          <dt>
+            <label htmlFor="edge-exit-at">Exit at</label>
+          </dt>
+          <dd>
+            <input
+              id="edge-exit-at"
+              className="inspector-number-input"
+              type="number"
+              min={0}
+              step={0.1}
+              value={edge.exitAtSec ?? ""}
+              placeholder={edge.transitionType === "cut" ? "end" : "end − fade"}
+              onChange={(event) =>
+                // NaN from an emptied field clears the position (edgeRules).
+                onChangeEdgeExitPosition(edge.id, event.target.valueAsNumber)
+              }
+            />
+            <span className="inspector-unit">s</span>
+          </dd>
+
+          <dt>
+            <label htmlFor="edge-enter-at">Enter at</label>
+          </dt>
+          <dd>
+            <input
+              id="edge-enter-at"
+              className="inspector-number-input"
+              type="number"
+              min={0}
+              step={0.1}
+              value={edge.enterAtSec ?? ""}
+              placeholder="start"
+              onChange={(event) =>
+                onChangeEdgeEnterPosition(edge.id, event.target.valueAsNumber)
+              }
+            />
+            <span className="inspector-unit">s</span>
+          </dd>
         </dl>
+
+        <p className="inspector-note">
+          Exit is where {fromLabel} leaves; Enter is where {toLabel} comes in.
+          Clear a field to use the default. Clicking the NOW or NEXT waveform
+          sets them too.
+        </p>
 
         <button
           type="button"

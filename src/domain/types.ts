@@ -46,6 +46,10 @@ export type TransitionType = "cut" | "fade" | "crossfade";
 /**
  * A TransitionEdge connects two TrackNodes as a directed transition.
  * fadeDurationSec is required: use 0 for cut, a positive number otherwise.
+ *
+ * Phase 20: the transition is a window of fadeDurationSec seconds. The two
+ * optional positions say where that window sits in each track; unset means
+ * the pre-Phase-20 behaviour, so older project JSON plays unchanged.
  */
 export type TransitionEdge = {
   id: string;
@@ -54,6 +58,16 @@ export type TransitionEdge = {
   transitionType: TransitionType;
   fadeDurationSec: number;
   note?: string;
+  /**
+   * Seconds into the FROM track where the window starts (where playback
+   * leaves it). Unset: one fade before the end, or the end for cut.
+   */
+  exitAtSec?: number;
+  /**
+   * Seconds into the TO track that plays when the window starts (where
+   * playback comes in). Unset: the start of the track.
+   */
+  enterAtSec?: number;
 };
 
 /**

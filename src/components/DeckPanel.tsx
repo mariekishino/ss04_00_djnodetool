@@ -11,18 +11,28 @@
 // Phase 17: clicking the waveform reports where it landed as a 0..1 ratio.
 // The deck stays presentational — it does not know what a seek is; App turns
 // the ratio into a position and decides what to do with it.
+//
+// Phase 20: a deck can show a transition window — a marker where the window
+// opens and a shaded span for its length — given as ratios by App. The click
+// still only reports a ratio and which deck it came from; whether that means
+// "seek here" or "put the transition here" is App's decision.
 
 import { useEffect, useRef, useState } from "react";
 import type { Track, TrackNode } from "../domain/types";
 import type { PlaybackProgress } from "../audio/playbackProgress";
 import { progressRatio } from "../audio/playbackProgress";
+import type { WindowRatios } from "../audio/transitionTiming";
 import { usePlaybackProgress } from "./usePlaybackProgress";
 import { formatTime } from "./formatTime";
 
 // Height of the drawn waveform in CSS pixels.
 const WAVEFORM_HEIGHT = 56;
 
+/** Which of the two decks something happened on. */
+export type DeckId = "now" | "next";
+
 type DeckProps = {
+  id: DeckId;
   label: string;
   node: TrackNode | null;
   track: Track | null;
@@ -30,8 +40,10 @@ type DeckProps = {
   // decoded audio. Asked for by width, so the deck reports its own width.
   getPeaks: (trackId: string, bucketCount: number) => Float32Array | null;
   getProgress: () => PlaybackProgress | null;
+  // The transition window to draw over the waveform, or null for none.
+  window: WindowRatios | null;
   onChangeBpm: (trackId: string, bpm: number | undefined) => void;
-  onSeek: (node: TrackNode, ratio: number) => void;
+  onWaveformClick: (deck: DeckId, node: TrackNode, ratio: number) => void;
 };
 
 // Draw the peaks as vertical bars around a centre line. Nothing about this is
@@ -65,13 +77,15 @@ function drawWaveform(
 }
 
 function Deck({
+  id,
   label,
   node,
   track,
   getPeaks,
   getProgress,
+  window: transitionWindow,
   onChangeBpm,
-  onSeek,
+  onWaveformClick,
 }: DeckProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // The canvas width in layout pixels, measured after layout so the number of
@@ -106,8 +120,8 @@ function Deck({
     drawWaveform(canvas, peaks, color);
   }, [peaks]);
 
-  // Only a track with a waveform has somewhere to seek to.
-  const canSeek = peaks !== null && node !== null;
+  // Only a track with a waveform has somewhere to click.
+  const canClick = peaks !== null && node !== null;
 
   const durationSec = progress?.durationSec;
   const playedRatio = progress
@@ -153,14 +167,14 @@ function Deck({
 
       <div
         className={
-          canSeek ? "deck-waveform seekable" : "deck-waveform"
+          canClick ? "deck-waveform seekable" : "deck-waveform"
         }
         style={{ height: WAVEFORM_HEIGHT }}
         onClick={(event) => {
-          if (!canSeek || !node) return;
+          if (!canClick || !node) return;
           // Where the click landed along the waveform, as 0..1.
           const bounds = event.currentTarget.getBoundingClientRect();
-          onSeek(node, (event.clientX - bounds.left) / bounds.width);
+          onWaveformClick(id, node, (event.clientX - bounds.left) / bounds.width);
         }}
       >
         <canvas
@@ -172,6 +186,21 @@ function Deck({
           <span className="deck-waveform-empty">
             {track ? "No audio loaded" : "Nothing selected"}
           </span>
+        )}
+        {peaks && transitionWindow && (
+          <>
+            <div
+              className="deck-window"
+              style={{
+                left: `${transitionWindow.startRatio * 100}%`,
+                width: `${(transitionWindow.endRatio - transitionWindow.startRatio) * 100}%`,
+              }}
+            />
+            <div
+              className="deck-marker"
+              style={{ left: `${transitionWindow.startRatio * 100}%` }}
+            />
+          </>
         )}
         {progress && (
           <div
@@ -189,10 +218,12 @@ type DeckPanelProps = {
   nowTrack: Track | null;
   nextNode: TrackNode | null;
   nextTrack: Track | null;
+  nowWindow: WindowRatios | null;
+  nextWindow: WindowRatios | null;
   getPeaks: (trackId: string, bucketCount: number) => Float32Array | null;
   getProgress: () => PlaybackProgress | null;
   onChangeBpm: (trackId: string, bpm: number | undefined) => void;
-  onSeek: (node: TrackNode, ratio: number) => void;
+  onWaveformClick: (deck: DeckId, node: TrackNode, ratio: number) => void;
 };
 
 function DeckPanel({
@@ -200,30 +231,36 @@ function DeckPanel({
   nowTrack,
   nextNode,
   nextTrack,
+  nowWindow,
+  nextWindow,
   getPeaks,
   getProgress,
   onChangeBpm,
-  onSeek,
+  onWaveformClick,
 }: DeckPanelProps) {
   return (
     <div className="deck-panel">
       <Deck
+        id="now"
         label="NOW"
         node={nowNode}
         track={nowTrack}
+        window={nowWindow}
         getPeaks={getPeaks}
         getProgress={getProgress}
         onChangeBpm={onChangeBpm}
-        onSeek={onSeek}
+        onWaveformClick={onWaveformClick}
       />
       <Deck
+        id="next"
         label="NEXT"
         node={nextNode}
         track={nextTrack}
+        window={nextWindow}
         getPeaks={getPeaks}
         getProgress={getProgress}
         onChangeBpm={onChangeBpm}
-        onSeek={onSeek}
+        onWaveformClick={onWaveformClick}
       />
     </div>
   );

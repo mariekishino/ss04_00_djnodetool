@@ -1,7 +1,9 @@
 // SequencePlayer walks the node graph during playback.
 //
 // Phase 12: it plays a node, waits until the transition point, then hands
-// over to the next node along the first outgoing edge, and repeats. It owns
+// over to the next node along the first outgoing edge, and repeats. Phase 20:
+// the transition point is the edge's exit position, and the next node comes
+// in at the edge's enter position (both resolved by transitionTiming). It owns
 // the stepping (timer + current node + step count) and calls the AudioEngine
 // for the sound; it never touches the Web Audio API or React itself.
 //
@@ -16,7 +18,7 @@ import type { TrackNode, TransitionEdge } from "../domain/types";
 import { findNextEdge } from "../domain/playbackSequence";
 import { AudioEngine } from "./audioEngine";
 import {
-  transitionTriggerOffset,
+  resolveTransitionPoints,
   sanitizeFadeDuration,
 } from "./transitionTiming";
 
@@ -140,24 +142,36 @@ export class SequencePlayer {
       return;
     }
 
-    const triggerAtSec = transitionTriggerOffset(
+    // Phase 20: leave at the edge's exit point (by default one fade before
+    // the end) and come into the next track at its enter point.
+    const { exitAtSec, enterAtSec } = resolveTransitionPoints(
+      edge,
       durationSec,
-      edge.transitionType,
-      edge.fadeDurationSec,
+      this.engine.durationForNode(nextNode),
     );
     this.setTimer(
-      () => this.advanceTo(edge, nextNode),
-      triggerAtSec - playedSec,
+      () => this.advanceTo(edge, nextNode, enterAtSec),
+      exitAtSec - playedSec,
     );
   }
 
-  // Hand over to the next node and schedule the step after it.
-  private advanceTo(edge: TransitionEdge, nextNode: TrackNode): void {
+  // Hand over to the next node and schedule the step after it. The next node
+  // starts enterAtSec into its track, so that much of it counts as already
+  // played when its own hand-over is scheduled.
+  private advanceTo(
+    edge: TransitionEdge,
+    nextNode: TrackNode,
+    enterAtSec: number,
+  ): void {
     this.stepCount += 1;
-    const { durationSec } = this.engine.transitionToNode(edge, nextNode);
+    const { durationSec } = this.engine.transitionToNode(
+      edge,
+      nextNode,
+      enterAtSec,
+    );
     this.listeners.onNowPlaying(nextNode.id);
     this.reportTransition(edge);
-    this.scheduleNextStep(nextNode, durationSec);
+    this.scheduleNextStep(nextNode, durationSec, enterAtSec);
   }
 
   // Report the edge as being crossed, and stop reporting it once the fade

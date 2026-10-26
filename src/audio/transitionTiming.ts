@@ -8,11 +8,14 @@
 // transition is essentially instant. We prefer an almost-immediate transition
 // over silently substituting a "natural" 3s, which would hide bad data.
 //
-// Phase 12 adds transitionTriggerOffset, the rule for WHEN sequential playback
-// leaves a track. Phase 9's rules describe how a transition sounds; this one
-// describes when it starts.
+// Phase 20: a transition is a window of `fadeDurationSec` seconds placed at
+// two positions — where it leaves the outgoing track and where it enters the
+// incoming one. resolveTransitionPoints turns an edge into those two concrete
+// numbers (applying the defaults for unset positions), and transitionShape
+// turns the transition type into the three numbers that drive the gains.
+// Together they replace the per-type branches the engine used to carry.
 
-import type { TransitionType } from "../domain/types";
+import type { TransitionEdge, TransitionType } from "../domain/types";
 
 // The smallest fade we allow. Also used for `cut`, which is effectively an
 // instant transition with just enough ramp to avoid a click.
@@ -39,27 +42,130 @@ export function sanitizeFadeDuration(seconds: number): number {
 // use for placeholder nodes.
 export const PLACEHOLDER_NODE_SECONDS = 5;
 
+// Durations from odd metadata (NaN, Infinity, negative) read as 0.
+function safeDuration(durationSec: number): number {
+  return Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0;
+}
+
+function clampToTrack(seconds: number, durationSec: number): number {
+  return Math.min(Math.max(0, seconds), safeDuration(durationSec));
+}
+
+/** The concrete positions of one edge's transition window, in seconds. */
+export type TransitionPoints = {
+  /** Where in the outgoing track the window starts. */
+  exitAtSec: number;
+  /** Where in the incoming track playback comes in. */
+  enterAtSec: number;
+};
+
 /**
- * How long after a track starts sequential playback should trigger the
- * transition to the next track, in seconds.
+ * Resolve an edge's transition positions against the two tracks' lengths.
  *
- * - cut: at the very end, so the next track starts as this one finishes.
- * - fade / crossfade: `fadeSec` before the end, so the fade-out (and, for
- *   crossfade, the overlap) covers the track's final seconds.
+ * - exit: `edge.exitAtSec` when set; otherwise the pre-Phase-20 rule — the
+ *   very end for `cut`, one fade before the end for `fade` / `crossfade`
+ *   (clamped to 0 when the fade is longer than the track).
+ * - enter: `edge.enterAtSec` when set; otherwise 0.
  *
- * A fade longer than the track clamps to 0: the transition starts at once
- * rather than at a negative time.
+ * Set positions are clamped into their track, so a position saved against a
+ * longer file still plays rather than scheduling past the end.
  */
-export function transitionTriggerOffset(
-  durationSec: number,
-  transitionType: TransitionType,
-  fadeSec: number,
-): number {
-  // Guard against NaN/Infinity/negative durations from odd metadata.
-  const duration =
-    Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0;
-  if (transitionType === "cut") {
-    return duration;
+export function resolveTransitionPoints(
+  edge: TransitionEdge,
+  fromDurationSec: number,
+  toDurationSec: number,
+): TransitionPoints {
+  const fromDuration = safeDuration(fromDurationSec);
+
+  let exitAtSec: number;
+  if (edge.exitAtSec !== undefined && Number.isFinite(edge.exitAtSec)) {
+    exitAtSec = clampToTrack(edge.exitAtSec, fromDuration);
+  } else if (edge.transitionType === "cut") {
+    exitAtSec = fromDuration;
+  } else {
+    exitAtSec = Math.max(
+      0,
+      fromDuration - sanitizeFadeDuration(edge.fadeDurationSec),
+    );
   }
-  return Math.max(0, duration - sanitizeFadeDuration(fadeSec));
+
+  const enterAtSec =
+    edge.enterAtSec !== undefined && Number.isFinite(edge.enterAtSec)
+      ? clampToTrack(edge.enterAtSec, toDurationSec)
+      : 0;
+
+  return { exitAtSec, enterAtSec };
+}
+
+/**
+ * The three numbers that make a transition sound like its type, all in
+ * seconds from the moment the window opens:
+ *
+ * - outgoingFadeSec: how long the outgoing track takes to reach silence.
+ * - incomingDelaySec: how long after the window opens the incoming track
+ *   starts.
+ * - incomingFadeSec: how long the incoming track takes to reach full volume
+ *   once it starts.
+ *
+ * | type      | outgoing fade | incoming delay | incoming fade |
+ * |-----------|---------------|----------------|---------------|
+ * | cut       | MIN           | 0              | MIN           |
+ * | fade      | fade          | fade           | MIN           |
+ * | crossfade | fade          | 0              | fade          |
+ *
+ * This is the "volume curve as data" form: a later stage that adds more
+ * curves (or drives a filter instead of a gain) extends this table rather
+ * than the engine.
+ */
+export type TransitionShape = {
+  outgoingFadeSec: number;
+  incomingDelaySec: number;
+  incomingFadeSec: number;
+};
+
+export function transitionShape(
+  transitionType: TransitionType,
+  fadeDurationSec: number,
+): TransitionShape {
+  const fade = sanitizeFadeDuration(fadeDurationSec);
+  switch (transitionType) {
+    case "cut":
+      return {
+        outgoingFadeSec: MIN_FADE_SECONDS,
+        incomingDelaySec: 0,
+        incomingFadeSec: MIN_FADE_SECONDS,
+      };
+    case "fade":
+      return {
+        outgoingFadeSec: fade,
+        incomingDelaySec: fade,
+        incomingFadeSec: MIN_FADE_SECONDS,
+      };
+    case "crossfade":
+      return { outgoingFadeSec: fade, incomingDelaySec: 0, incomingFadeSec: fade };
+  }
+}
+
+/** Where a transition window sits along a track, as 0..1 of its length. */
+export type WindowRatios = {
+  startRatio: number;
+  endRatio: number;
+};
+
+/**
+ * The window's span along one track for drawing on its waveform: it opens at
+ * `startSec` and lasts `fadeSec`. Both ends clamp into 0..1, and a track
+ * without a usable duration gives null (nothing to draw against).
+ */
+export function windowRatios(
+  startSec: number,
+  fadeSec: number,
+  durationSec: number,
+): WindowRatios | null {
+  const duration = safeDuration(durationSec);
+  if (duration === 0) return null;
+  const startRatio = clampToTrack(startSec, duration) / duration;
+  const endRatio =
+    clampToTrack(startSec + sanitizeFadeDuration(fadeSec), duration) / duration;
+  return { startRatio, endRatio };
 }

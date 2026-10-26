@@ -133,6 +133,24 @@ When an edge is selected, show:
 When the user changes `transitionType` to `cut`, `fadeDurationSec` should be automatically set to `0`.
 When the user changes `transitionType` to `fade` or `crossfade` and `fadeDurationSec` is `0`, it should be automatically reset to `3`.
 
+Phase 20 adds two number inputs, "Exit at" (`exitAtSec`) and "Enter at" (`enterAtSec`), in seconds. An empty field means the default (shown as a placeholder); clearing a field returns to it. Values are clamped into the track they refer to.
+
+## Deck Panel (Phase 16–20)
+
+A strip along the bottom shows two decks, NOW and NEXT, each with its track's waveform, position, and BPM.
+
+Which nodes the decks show:
+
+- With an edge selected: NOW is the edge's from-node and NEXT is its to-node, and each waveform shows the transition window (a marker where it opens and a shaded span for its length).
+- Otherwise: NOW is the node playing, or the selected node when nothing plays; NEXT is where playback would go from there along the first outgoing edge. What NEXT should show when a node has several outgoing edges is still an open question.
+
+What a click on a waveform does:
+
+- With an edge selected: a click on NOW sets the edge's `exitAtSec`; a click on NEXT sets its `enterAtSec`.
+- Otherwise: a click seeks to that point of the track (Phase 17).
+
+"Play transition" on a selected edge starts the from-track five seconds before its exit point, hands over there, and brings the to-track in at its enter point, so the transition can be heard without waiting for the track to end.
+
 ### Nothing Selected
 
 When no node or edge is selected, show a placeholder message such as "Select a node or edge".

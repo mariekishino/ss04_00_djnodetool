@@ -36,6 +36,13 @@
 // transitionType and fadeDurationSec. The consistency rules (cut -> fade 0,
 // fade/crossfade from 0 -> default) live in domain/edgeRules, not here.
 //
+// Phase 20: "Transition positions". An edge can say where it leaves its
+// from-track and where it enters its to-track. With an edge selected, the
+// decks show that edge's two nodes with the window drawn on each waveform, and
+// a waveform click places the position (NOW = exit, NEXT = enter) instead of
+// seeking. The clamping rules live in domain/edgeRules; the resolved points
+// come from audio/transitionTiming.
+//
 // Phase 17: "Seek by clicking". A click on a deck's waveform moves playback
 // to that point. Web Audio cannot move a playing source, so the engine starts
 // a new one at an offset; a running sequence reschedules its hand-over from
@@ -88,8 +95,14 @@ import { mockProject } from "./domain/mockProject";
 import {
   changeTransitionType,
   changeFadeDuration,
+  changeExitPosition,
+  changeEnterPosition,
   DEFAULT_FADE_SECONDS,
 } from "./domain/edgeRules";
+import {
+  resolveTransitionPoints,
+  windowRatios,
+} from "./audio/transitionTiming";
 import { downloadProject, parseProject } from "./storage/projectStorage";
 import {
   fetchServerTracks,
@@ -108,7 +121,7 @@ import ProjectToolbar from "./components/ProjectToolbar";
 import NodeCanvas from "./components/NodeCanvas";
 import InspectorPanel from "./components/InspectorPanel";
 import PlayerControls from "./components/PlayerControls";
-import DeckPanel from "./components/DeckPanel";
+import DeckPanel, { type DeckId } from "./components/DeckPanel";
 import { NODE_WIDTH, NODE_HEIGHT } from "./components/canvasLayout";
 
 // Default color for runtime-created nodes (tracks have no color of their own).
@@ -372,6 +385,35 @@ function App() {
     updateEdge(edgeId, (edge) => changeFadeDuration(edge, seconds));
   }
 
+  // The length of a node's track as the engine will play it (the decoded
+  // audio, or the placeholder length). Used to clamp a position into it.
+  function playableDurationSec(node: TrackNodeData): number {
+    return getAudioEngine().durationForNode(node);
+  }
+
+  // Change where an edge leaves its from-track. edgeRules clamps the value
+  // into that track and clears it on NaN (an emptied field).
+  function handleChangeEdgeExitPosition(edgeId: string, seconds: number) {
+    const edge = project.edges.find((candidate) => candidate.id === edgeId);
+    const fromNode = project.nodes.find((node) => node.id === edge?.fromNodeId);
+    if (!edge || !fromNode) return;
+    const durationSec = playableDurationSec(fromNode);
+    updateEdge(edgeId, (current) =>
+      changeExitPosition(current, seconds, durationSec),
+    );
+  }
+
+  // Change where an edge enters its to-track, with the same rules.
+  function handleChangeEdgeEnterPosition(edgeId: string, seconds: number) {
+    const edge = project.edges.find((candidate) => candidate.id === edgeId);
+    const toNode = project.nodes.find((node) => node.id === edge?.toNodeId);
+    if (!edge || !toNode) return;
+    const durationSec = playableDurationSec(toNode);
+    updateEdge(edgeId, (current) =>
+      changeEnterPosition(current, seconds, durationSec),
+    );
+  }
+
   // Delete a single edge by id, then clear the edge selection.
   function handleDeleteEdge(edgeId: string) {
     setProject((current) => ({
@@ -543,20 +585,57 @@ function App() {
   // from the nodes rather than stored, so it cannot fall out of step.
   const usedTrackIds = new Set(project.nodes.map((node) => node.trackId));
 
-  // What the deck panel shows: the node playing now, or the selected one when
-  // nothing plays, and the node playback would move to from there. The NEXT
-  // deck follows the same first-outgoing-edge rule as sequential playback, so
-  // it shows what would actually come next.
-  const deckNowNode =
-    project.nodes.find((node) => node.id === nowPlayingNodeId) ??
-    project.nodes.find((node) => node.id === selectedNodeId) ??
-    null;
-  const deckNextEdge = deckNowNode
-    ? findNextEdge(project.edges, deckNowNode.id)
-    : null;
-  const deckNextNode = deckNextEdge
-    ? (project.nodes.find((node) => node.id === deckNextEdge.toNodeId) ?? null)
-    : null;
+  // What the deck panel shows.
+  //
+  // Phase 20: with an edge selected, the decks are that edge's two ends, so
+  // its transition can be placed and previewed. Otherwise (Phase 16): the node
+  // playing now, or the selected one when nothing plays, and the node playback
+  // would move to from there, following the same first-outgoing-edge rule as
+  // sequential playback.
+  const decksShowEdge =
+    selectedEdge !== null &&
+    transitionSourceNode !== null &&
+    transitionTargetNode !== null;
+
+  let deckNowNode: TrackNodeData | null;
+  let deckNextNode: TrackNodeData | null;
+  if (decksShowEdge) {
+    deckNowNode = transitionSourceNode;
+    deckNextNode = transitionTargetNode;
+  } else {
+    deckNowNode =
+      project.nodes.find((node) => node.id === nowPlayingNodeId) ??
+      project.nodes.find((node) => node.id === selectedNodeId) ??
+      null;
+    const deckNextEdge = deckNowNode
+      ? findNextEdge(project.edges, deckNowNode.id)
+      : null;
+    deckNextNode = deckNextEdge
+      ? (project.nodes.find((node) => node.id === deckNextEdge.toNodeId) ??
+        null)
+      : null;
+  }
+
+  // The selected edge's transition window on each deck, as 0..1 of the
+  // track, or null when there is no edge or the track has no audio yet. The
+  // decoded length comes from trackAudioInfo (React state that mirrors what
+  // is loaded), not from Track.durationSec, which is not reliably saved.
+  let nowWindow = null;
+  let nextWindow = null;
+  if (decksShowEdge) {
+    const fromDurationSec =
+      trackAudioInfo.get(transitionSourceNode.trackId)?.durationSec ?? 0;
+    const toDurationSec =
+      trackAudioInfo.get(transitionTargetNode.trackId)?.durationSec ?? 0;
+    const points = resolveTransitionPoints(
+      selectedEdge,
+      fromDurationSec,
+      toDurationSec,
+    );
+    const fadeSec = selectedEdge.fadeDurationSec;
+    nowWindow = windowRatios(points.exitAtSec, fadeSec, fromDurationSec);
+    nextWindow = windowRatios(points.enterAtSec, fadeSec, toDurationSec);
+  }
 
   // The track a node plays, for the decks.
   function trackForNode(node: TrackNodeData | null) {
@@ -630,6 +709,23 @@ function App() {
     setNowPlayingNodeId(node.id);
   }
 
+  // A click on a deck's waveform. With an edge selected the decks show that
+  // edge's ends, and the click places its transition: NOW sets where the
+  // from-track is left, NEXT sets where the to-track is entered. Otherwise
+  // the click is a seek (Phase 17).
+  function handleWaveformClick(deck: DeckId, node: TrackNodeData, ratio: number) {
+    if (decksShowEdge) {
+      const seconds = offsetFromRatio(ratio, playableDurationSec(node));
+      if (deck === "now") {
+        handleChangeEdgeExitPosition(selectedEdge.id, seconds);
+      } else {
+        handleChangeEdgeEnterPosition(selectedEdge.id, seconds);
+      }
+      return;
+    }
+    handleSeek(node, ratio);
+  }
+
   return (
     <div className="app-shell">
     <div className="app-layout">
@@ -662,6 +758,8 @@ function App() {
           onStartConnection={handleStartConnection}
           onChangeEdgeTransitionType={handleChangeEdgeTransitionType}
           onChangeEdgeFadeDuration={handleChangeEdgeFadeDuration}
+          onChangeEdgeExitPosition={handleChangeEdgeExitPosition}
+          onChangeEdgeEnterPosition={handleChangeEdgeEnterPosition}
         />
         <PlayerControls
           selectedNode={selectedNode}
@@ -697,10 +795,12 @@ function App() {
         nowTrack={trackForNode(deckNowNode)}
         nextNode={deckNextNode}
         nextTrack={trackForNode(deckNextNode)}
+        nowWindow={nowWindow}
+        nextWindow={nextWindow}
         getPeaks={getTrackPeaks}
         getProgress={getPlaybackProgress}
         onChangeBpm={handleChangeTrackBpm}
-        onSeek={handleSeek}
+        onWaveformClick={handleWaveformClick}
       />
     </div>
   );

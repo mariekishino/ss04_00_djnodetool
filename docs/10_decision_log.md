@@ -2349,3 +2349,134 @@ check: all files listed with attached ones disabled, no per-card controls,
 an added file flips to "(added)" in place, eight nodes added in a row with
 zero overlaps, no console errors. The developer confirmed the flow
 (pick file → track → Add to Canvas) hands-on on 2026-08-24.
+
+## 2026-10-26: Phase 20 Implementation Decisions (Transition Positions)
+
+### Context
+
+Step 3 of the four-step road map from Phase 16 ("choosing transition
+points by eye") was split on 2026-10-26 into five stages, after the
+2026-10-08 reading of Spotify's transition screen showed how much a
+transition can hold: ① window, positions, volume; ② tempo matching;
+③ filter and EQ; ④ effects; ⑤ looping. Phase 20 is stage ①. The approved
+plan is `docs/plans/phase20_transition_positions.md`; the records behind
+it are `docs/discussions/2026-10-08_transition_design_spotify_reference.md`
+and `docs/discussions/2026-10-26_timber_timbre_reference.md`.
+
+### Decisions
+
+#### 1. Two optional positions on the edge, nothing renamed
+
+Decision:
+
+`TransitionEdge` gains `exitAtSec` (where the window opens in the
+from-track) and `enterAtSec` (where the to-track comes in). Both are
+optional; unset means the pre-Phase-20 behaviour. `transitionType` and
+`fadeDurationSec` stay as they are: the window's length is the fade, and
+the three types are the volume curves for now.
+
+Reason:
+
+Older project JSON loads and plays unchanged, so no migration is needed
+and Phase 19 (data layer) no longer has to come first. This deviates from
+the 2026-10-08 ordering on purpose. Generalising the curve field is
+deferred to stage ③, where a second parameter actually needs it.
+
+#### 2. Positions in seconds, kept to 10 ms, clamped by the caller's duration
+
+Decision:
+
+Positions are seconds, rounded to 0.01 s, and clamped into
+`[0, duration]` by pure rules in `edgeRules.ts` that take the track's
+length as an argument. Playback clamps again against the decoded buffer.
+
+Reason:
+
+Beats need a first-beat position per track, which does not exist yet
+(stage ⑤'s prerequisite). `Track.durationSec` is not reliably saved
+(Phase 19), so the domain does not look it up; the caller knows the
+decoded length. Rounding keeps a waveform click from writing a long float
+into the JSON.
+
+#### 3. The transition type is a table of three numbers
+
+Decision:
+
+`transitionShape(type, fade)` returns `outgoingFadeSec`,
+`incomingDelaySec`, `incomingFadeSec`. The engine has one `handOver` and
+one `rampGain` instead of a cut/fade/crossfade branch in each play method.
+
+Reason:
+
+The Timber Timbre note (2026-10-26) marked this duplication as the place
+where "a curve independent of what it drives" would land. Doing it here,
+while every one of those lines was being touched, cost nothing extra and
+leaves stage ③ a table to extend rather than an engine to rewrite.
+
+#### 4. With an edge selected, the decks show its two ends
+
+Decision:
+
+NOW shows the edge's from-node and NEXT its to-node, each with the window
+drawn on its waveform. With a node selected the Phase 16 rule stands.
+
+Reason:
+
+This is the one case the 2026-10-08 record called "natural" for the NEXT
+deck, and the edge's two ends are exactly what placing a transition needs
+to see. Branch choice with a node selected stays open.
+
+#### 5. A waveform click places the transition when an edge is selected
+
+Decision:
+
+With an edge selected, a click on NOW sets `exitAtSec` and a click on
+NEXT sets `enterAtSec`; with a node selected, a click seeks as in Phase 17.
+The deck still only reports a ratio and which deck it came from.
+
+Reason:
+
+One gesture, two meanings, chosen by what is selected — agreed with the
+developer on 2026-10-26 before implementation, as the 2026-08-17 record
+asks. If it proves confusing in use, the fallback is a "set here" button
+per deck, with no data change.
+
+#### 6. "Play transition" starts five seconds before the exit point
+
+Decision:
+
+The preview starts the from-track at `max(0, exit − 5 s)`, hands over at
+the exit point, and brings the to-track in at its enter point. The five
+seconds are a constant.
+
+Reason:
+
+Feedback item 3 (2026-08-17): with a four-minute track there was no
+practical way to hear a transition at all.
+
+#### 7. Progress follows a list of scheduled starts
+
+Decision:
+
+The engine records each real-track start with the time it becomes
+audible, and reports the latest audible one. `stop()` clears the list.
+
+Reason:
+
+A `fade` target and a preview target start in the future. With a single
+"current playback" the NOW deck would have shown the incoming track, at a
+negative position, while the outgoing one was still playing.
+
+### Verification
+
+`tsc`, eslint and 114 tests (18 new: 6 edgeRules, 12 transitionTiming)
+pass. Browser check (Playwright against the dev server and the local
+server, with the developer's `data/project.json` left unsaved): selecting
+an edge puts its two nodes on the decks with markers at the defaults;
+NOW click at 50% sets Exit at 128.77 s and NEXT click at 25% sets Enter at
+60.87 s, markers follow; emptying the field clears the position; Play
+transition shows the from-track at 2:04 after 0.8 s and the to-track at
+1:02 after 6.3 s; a node-selected click still seeks; "Play from here"
+with exit 2 s / enter 10 s shows the to-track at 0:11 after 3.1 s;
+exported JSON carries the two fields; no console errors. Audible
+correctness is left to the developer.

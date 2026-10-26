@@ -88,6 +88,8 @@ export type TransitionEdge = {
   transitionType: TransitionType;
   fadeDurationSec: number;
   note?: string;
+  exitAtSec?: number;   // Phase 20
+  enterAtSec?: number;  // Phase 20
 };
 ```
 
@@ -98,6 +100,9 @@ export type TransitionEdge = {
 - `transitionType` defines how the transition should behave.
 - `fadeDurationSec` is required. For `cut`, use `0` by convention. For `fade` and `crossfade`, use a positive number.
 - `note` can describe why the user connected the tracks.
+- `exitAtSec` (Phase 20) is where in the from-track the transition window opens, in seconds. Unset means one fade before the end (the end itself for `cut`).
+- `enterAtSec` (Phase 20) is where in the to-track playback comes in, in seconds. Unset means the start.
+- Both positions are optional so that project JSON written before Phase 20 loads and plays unchanged. They are kept to 10 ms and clamped into their track when edited and when played.
 
 Examples of notes:
 

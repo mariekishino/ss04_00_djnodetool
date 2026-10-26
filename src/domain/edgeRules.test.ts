@@ -5,6 +5,8 @@ import type { TransitionEdge } from "./types";
 import {
   changeTransitionType,
   changeFadeDuration,
+  changeExitPosition,
+  changeEnterPosition,
   DEFAULT_FADE_SECONDS,
 } from "./edgeRules";
 
@@ -68,5 +70,50 @@ describe("changeFadeDuration", () => {
   it("keeps a cut edge at 0 regardless of input", () => {
     const edge = makeEdge({ transitionType: "cut", fadeDurationSec: 0 });
     expect(changeFadeDuration(edge, 4).fadeDurationSec).toBe(0);
+  });
+});
+
+describe("changeExitPosition / changeEnterPosition", () => {
+  it("sets a position inside the track", () => {
+    expect(changeExitPosition(makeEdge(), 42, 180).exitAtSec).toBe(42);
+    expect(changeEnterPosition(makeEdge(), 12.5, 180).enterAtSec).toBe(12.5);
+  });
+
+  it("clamps below 0 and above the track's duration", () => {
+    expect(changeExitPosition(makeEdge(), -5, 180).exitAtSec).toBe(0);
+    expect(changeExitPosition(makeEdge(), 500, 180).exitAtSec).toBe(180);
+    expect(changeEnterPosition(makeEdge(), 500, 180).enterAtSec).toBe(180);
+  });
+
+  it("clears the position on non-finite input, dropping the key", () => {
+    const edge = makeEdge({ exitAtSec: 30, enterAtSec: 10 });
+    const exitCleared = changeExitPosition(edge, Number.NaN, 180);
+    expect(exitCleared.exitAtSec).toBeUndefined();
+    expect("exitAtSec" in exitCleared).toBe(false);
+    // The other position is untouched.
+    expect(exitCleared.enterAtSec).toBe(10);
+
+    const enterCleared = changeEnterPosition(edge, Number.NaN, 180);
+    expect("enterAtSec" in enterCleared).toBe(false);
+    expect(enterCleared.exitAtSec).toBe(30);
+  });
+
+  it("rounds a position to 10 ms", () => {
+    expect(changeExitPosition(makeEdge(), 128.77451, 180).exitAtSec).toBe(
+      128.77,
+    );
+    expect(changeEnterPosition(makeEdge(), 60.875, 180).enterAtSec).toBe(60.88);
+  });
+
+  it("treats an unknown duration as 0, so a position cannot escape it", () => {
+    expect(changeExitPosition(makeEdge(), 10, Number.NaN).exitAtSec).toBe(0);
+    expect(changeEnterPosition(makeEdge(), 10, 0).enterAtSec).toBe(0);
+  });
+
+  it("does not mutate the original edge", () => {
+    const edge = makeEdge();
+    changeExitPosition(edge, 42, 180);
+    expect(edge.exitAtSec).toBeUndefined();
+    expect(edge.id).toBe("edge-1");
   });
 });
